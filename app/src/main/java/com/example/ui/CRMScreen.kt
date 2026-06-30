@@ -24,19 +24,31 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.data.database.Customer
 import com.example.data.database.Supplier
+import com.example.data.database.Invoice
+import com.example.data.database.WhatsAppMessageLog
+import com.example.data.database.Transaction
+import com.example.data.database.TransactionItem
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CRMScreen(
     customers: List<Customer>,
     suppliers: List<Supplier>,
+    invoices: List<Invoice>,
+    whatsappLogs: List<WhatsAppMessageLog>,
+    transactions: List<Transaction>,
+    selectedCurrency: String,
+    usdExchangeRate: Double,
     onAddCustomer: (String, String, String) -> Unit,
     onDeleteCustomer: (Int) -> Unit,
     onAddSupplier: (String, String, String) -> Unit,
     onDeleteSupplier: (Int) -> Unit,
+    onSendWhatsAppCloudApi: (String, String, String, Double, String, Double, String, (Boolean, String) -> Unit) -> Unit,
+    onLogWhatsAppClickToChat: (String, String, Double) -> Unit,
+    onGetTransactionItems: suspend (Int) -> List<TransactionItem>,
     modifier: Modifier = Modifier
 ) {
-    var selectedTab by remember { mutableStateOf(0) } // 0 = Customers, 1 = Suppliers
+    var selectedTab by remember { mutableStateOf(0) } // 0 = Customers, 1 = Suppliers, 2 = Invoices
     var showAddDialog by remember { mutableStateOf(false) }
 
     // Dialog Input states
@@ -64,6 +76,11 @@ fun CRMScreen(
                     onClick = { selectedTab = 1 },
                     text = { Text("B2B Suppliers", fontWeight = FontWeight.Bold) }
                 )
+                Tab(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    text = { Text("Invoice Hub", fontWeight = FontWeight.Bold) }
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -82,7 +99,7 @@ fun CRMScreen(
                             }
                         }
                     }
-                } else {
+                } else if (selectedTab == 1) {
                     // Suppliers view
                     if (suppliers.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -91,26 +108,42 @@ fun CRMScreen(
                     } else {
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             items(suppliers) { supplier ->
-                                SupplierCard(supplier, onDelete = { onDeleteSupplier(supplier.id) })
+                                SupplierCard(supplier, currency = selectedCurrency, exchangeRate = usdExchangeRate, onDelete = { onDeleteSupplier(supplier.id) })
                             }
                         }
                     }
+                } else {
+                    // Invoice Hub view
+                    InvoiceHub(
+                        invoices = invoices,
+                        whatsappLogs = whatsappLogs,
+                        transactions = transactions,
+                        customers = customers,
+                        selectedCurrency = selectedCurrency,
+                        usdExchangeRate = usdExchangeRate,
+                        onSendWhatsAppCloudApi = onSendWhatsAppCloudApi,
+                        onLogWhatsAppClickToChat = onLogWhatsAppClickToChat,
+                        onGetTransactionItems = onGetTransactionItems
+                    )
                 }
             }
         }
 
         // Action FAB to add
-        FloatingActionButton(
-            onClick = { showAddDialog = true },
-            containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(24.dp)
-                .testTag("crm_add_fab")
-        ) {
-            Icon(Icons.Default.Add, contentDescription = "Add Entry")
+        if (selectedTab != 2) {
+            FloatingActionButton(
+                onClick = { showAddDialog = true },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(24.dp)
+                    .testTag("crm_add_fab")
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add Entry")
+            }
         }
+
 
         // ADD CRM / B2B DIALOG
         if (showAddDialog) {
@@ -257,7 +290,7 @@ fun CustomerCard(customer: Customer, onDelete: () -> Unit) {
 }
 
 @Composable
-fun SupplierCard(supplier: Supplier, onDelete: () -> Unit) {
+fun SupplierCard(supplier: Supplier, currency: String, exchangeRate: Double, onDelete: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -305,7 +338,7 @@ fun SupplierCard(supplier: Supplier, onDelete: () -> Unit) {
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "Payable: $${String.format("%.2f", supplier.balance)}",
+                        text = "Payable: ${CurrencyFormatter.format(supplier.balance, currency, exchangeRate)}",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer

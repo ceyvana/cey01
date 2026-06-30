@@ -14,6 +14,9 @@ class BusinessRepository(private val database: AppDatabase) {
     private val employeeDao = database.employeeDao()
     private val purchaseDao = database.purchaseDao()
     private val paymentDao = database.paymentDao()
+    private val invoiceDao = database.invoiceDao()
+    private val whatsAppMessageLogDao = database.whatsAppMessageLogDao()
+    private val exchangeRateDao = database.exchangeRateDao()
 
     // Products
     val allProducts: Flow<List<Product>> = productDao.getAllProducts()
@@ -29,6 +32,20 @@ class BusinessRepository(private val database: AppDatabase) {
     suspend fun insertProduct(product: Product): Long = productDao.insertProduct(product)
     suspend fun updateProduct(product: Product) = productDao.updateProduct(product)
     suspend fun deleteProductById(id: Int) = productDao.deleteProductById(id)
+
+    // Invoices & WhatsApp logs
+    val allInvoices: Flow<List<Invoice>> = invoiceDao.getAllInvoices()
+    val allLogs: Flow<List<WhatsAppMessageLog>> = whatsAppMessageLogDao.getAllLogs()
+
+    suspend fun getMaxInvoiceId(): Int = invoiceDao.getMaxInvoiceId()
+    suspend fun insertInvoice(invoice: Invoice): Long = invoiceDao.insertInvoice(invoice)
+    suspend fun updateInvoice(invoice: Invoice) = invoiceDao.updateInvoice(invoice)
+    suspend fun getInvoiceByTransactionId(transactionId: Int): Invoice? = invoiceDao.getInvoiceByTransactionId(transactionId)
+    suspend fun getInvoiceById(id: Int): Invoice? = invoiceDao.getInvoiceById(id)
+    fun getInvoicesForCustomer(customerId: Int): Flow<List<Invoice>> = invoiceDao.getInvoicesForCustomer(customerId)
+
+    suspend fun insertWhatsAppMessageLog(log: WhatsAppMessageLog): Long = whatsAppMessageLogDao.insertLog(log)
+
 
     // Categories
     val allCategories: Flow<List<Category>> = categoryDao.getAllCategories()
@@ -195,4 +212,9 @@ class BusinessRepository(private val database: AppDatabase) {
     }
 
     suspend fun deleteTransactionById(id: Int) = transactionDao.deleteTransactionById(id)
+
+    // Exchange Rates
+    fun getExchangeRateFlow(currencyCode: String): Flow<ExchangeRateEntity?> = exchangeRateDao.getExchangeRateFlow(currencyCode)
+    suspend fun getExchangeRate(currencyCode: String): ExchangeRateEntity? = exchangeRateDao.getExchangeRate(currencyCode)
+    suspend fun insertExchangeRate(exchangeRate: ExchangeRateEntity) = exchangeRateDao.insertExchangeRate(exchangeRate)
 }

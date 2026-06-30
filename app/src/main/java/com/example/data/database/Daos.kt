@@ -140,7 +140,14 @@ interface TransactionDao {
     fun getSalesCountFlow(): Flow<Int>
 
     @Query("""
-        SELECT COALESCE(SUM(ti.quantity * p.costPrice), 0.0) 
+        SELECT COALESCE(SUM(
+            CASE WHEN p.isWeightBased = 1 
+                 THEN (ti.quantity * p.costPrice / 1000.0) 
+                 WHEN p.unit_type = 'Packet'
+                 THEN (ti.quantity * p.costPrice / (CASE WHEN p.packet_weight = 0 THEN 1.0 ELSE p.packet_weight * (CASE WHEN p.packet_weight_unit = 'kg' THEN 1000.0 ELSE 1.0 END) END))
+                 ELSE ti.quantity * p.costPrice 
+            END
+        ), 0.0) 
         FROM transaction_items ti 
         INNER JOIN products p ON ti.productId = p.id 
         INNER JOIN transactions t ON ti.transactionId = t.id 
@@ -217,3 +224,52 @@ interface PaymentDao {
     @Query("DELETE FROM payments WHERE id = :id")
     suspend fun deletePaymentById(id: Int)
 }
+
+@Dao
+interface InvoiceDao {
+    @Query("SELECT * FROM invoices ORDER BY timestamp DESC")
+    fun getAllInvoices(): Flow<List<Invoice>>
+
+    @Query("SELECT * FROM invoices WHERE id = :id")
+    suspend fun getInvoiceById(id: Int): Invoice?
+
+    @Query("SELECT * FROM invoices WHERE transactionId = :transactionId LIMIT 1")
+    suspend fun getInvoiceByTransactionId(transactionId: Int): Invoice?
+
+    @Query("SELECT * FROM invoices WHERE customerId = :customerId ORDER BY timestamp DESC")
+    fun getInvoicesForCustomer(customerId: Int): Flow<List<Invoice>>
+
+    @Query("SELECT COALESCE(MAX(id), 0) FROM invoices")
+    suspend fun getMaxInvoiceId(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertInvoice(invoice: Invoice): Long
+
+    @Update
+    suspend fun updateInvoice(invoice: Invoice)
+
+    @Query("DELETE FROM invoices WHERE id = :id")
+    suspend fun deleteInvoiceById(id: Int)
+}
+
+@Dao
+interface WhatsAppMessageLogDao {
+    @Query("SELECT * FROM whatsapp_messages_logs ORDER BY timestamp DESC")
+    fun getAllLogs(): Flow<List<WhatsAppMessageLog>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLog(log: WhatsAppMessageLog): Long
+}
+
+@Dao
+interface ExchangeRateDao {
+    @Query("SELECT * FROM exchange_rates WHERE currencyCode = :currencyCode LIMIT 1")
+    suspend fun getExchangeRate(currencyCode: String): ExchangeRateEntity?
+
+    @Query("SELECT * FROM exchange_rates WHERE currencyCode = :currencyCode LIMIT 1")
+    fun getExchangeRateFlow(currencyCode: String): Flow<ExchangeRateEntity?>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertExchangeRate(exchangeRate: ExchangeRateEntity)
+}
+

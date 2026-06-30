@@ -16,9 +16,12 @@ import androidx.room.RoomDatabase
         Expense::class,
         Employee::class,
         Purchase::class,
-        Payment::class
+        Payment::class,
+        Invoice::class,
+        WhatsAppMessageLog::class,
+        ExchangeRateEntity::class
     ],
-    version = 2,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -31,6 +34,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun employeeDao(): EmployeeDao
     abstract fun purchaseDao(): PurchaseDao
     abstract fun paymentDao(): PaymentDao
+    abstract fun invoiceDao(): InvoiceDao
+    abstract fun whatsAppMessageLogDao(): WhatsAppMessageLogDao
+    abstract fun exchangeRateDao(): ExchangeRateDao
+
 
     companion object {
         @Volatile

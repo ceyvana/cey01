@@ -70,6 +70,12 @@ class MainActivity : ComponentActivity() {
                 val businessStats by viewModel.businessStats.collectAsState()
                 val transactions by viewModel.transactions.collectAsState()
                 val lowStockProducts by viewModel.lowStockProducts.collectAsState()
+                val selectedCurrency by viewModel.selectedCurrency.collectAsState()
+                val usdExchangeRate by viewModel.usdExchangeRate.collectAsState()
+                val currencySyncState by viewModel.currencySyncState.collectAsState()
+                val invoices by viewModel.invoices.collectAsState()
+                val whatsappLogs by viewModel.whatsappLogs.collectAsState()
+
 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
@@ -146,6 +152,12 @@ class MainActivity : ComponentActivity() {
                                     lowStockProducts = lowStockProducts,
                                     products = products,
                                     suppliers = suppliers,
+                                    selectedCurrency = selectedCurrency,
+                                    usdExchangeRate = usdExchangeRate,
+                                    currencySyncState = currencySyncState,
+                                    onCurrencyChange = { viewModel.setCurrency(it) },
+                                    onExchangeRateChange = { viewModel.setExchangeRate(it) },
+                                    onSyncCurrency = { viewModel.syncExchangeRate() },
                                     onAddPurchase = { prodId, qty, cost, suppId, suppName, method ->
                                         viewModel.addPurchase(prodId, qty, cost, suppId, suppName, method)
                                     },
@@ -172,6 +184,8 @@ class MainActivity : ComponentActivity() {
                                     cart = cart,
                                     selectedCustomer = selectedCustomer,
                                     discountPercentage = discountPercentage,
+                                    selectedCurrency = selectedCurrency,
+                                    usdExchangeRate = usdExchangeRate,
                                     onAddToCart = { viewModel.addToCart(it) },
                                     onRemoveFromCart = { viewModel.removeFromCart(it) },
                                     onUpdateCartQty = { prod, qty -> viewModel.updateCartQty(prod, qty) },
@@ -185,8 +199,13 @@ class MainActivity : ComponentActivity() {
                                 InventoryScreen(
                                     products = products,
                                     categories = categories,
-                                    onAddProduct = { name, sku, price, cost, stock, threshold, cat, brand ->
-                                        viewModel.addProduct(name, sku, price, cost, stock, threshold, cat, brand)
+                                    selectedCurrency = selectedCurrency,
+                                    usdExchangeRate = usdExchangeRate,
+                                    onAddProduct = { name, sku, price, cost, stock, threshold, cat, brand, isWeightBased, unit, unitType, packWeight, packWeightUnit, openStock, totalWeightGrams ->
+                                        viewModel.addProduct(name, sku, price, cost, stock, threshold, cat, brand, isWeightBased, unit, unitType, packWeight, packWeightUnit, openStock, totalWeightGrams)
+                                    },
+                                    onEditProduct = { product ->
+                                        viewModel.updateProduct(product)
                                     },
                                     onDeleteProduct = { viewModel.deleteProduct(it) },
                                     onUpdateStock = { id, qty -> viewModel.updateStock(id, qty) }
@@ -196,12 +215,27 @@ class MainActivity : ComponentActivity() {
                                 CRMScreen(
                                     customers = customers,
                                     suppliers = suppliers,
+                                    invoices = invoices,
+                                    whatsappLogs = whatsappLogs,
+                                    transactions = transactions,
+                                    selectedCurrency = selectedCurrency,
+                                    usdExchangeRate = usdExchangeRate,
                                     onAddCustomer = { name, phone, email -> viewModel.addCustomer(name, phone, email) },
                                     onDeleteCustomer = { viewModel.deleteCustomer(it) },
                                     onAddSupplier = { name, phone, email -> viewModel.addSupplier(name, phone, email) },
-                                    onDeleteSupplier = { viewModel.deleteSupplier(it) }
+                                    onDeleteSupplier = { viewModel.deleteSupplier(it) },
+                                    onSendWhatsAppCloudApi = { phone, invNum, name, total, curr, rate, status, callback ->
+                                        viewModel.sendInvoiceWhatsAppCloudApi(invNum, phone, name, total, curr, rate, status, callback)
+                                    },
+                                    onLogWhatsAppClickToChat = { invNum, phone, total ->
+                                        viewModel.logWhatsAppClickToChat(invNum, phone, total)
+                                    },
+                                    onGetTransactionItems = { txId ->
+                                        viewModel.getItemsForTransaction(txId)
+                                    }
                                 )
                             }
+
                             Screen.AI -> {
                                 AIScreen(
                                     chatHistory = chatHistory,

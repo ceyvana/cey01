@@ -38,6 +38,7 @@ import com.example.data.database.Product
 import com.example.data.database.Supplier
 import com.example.data.database.Transaction
 import com.example.viewmodel.BusinessStats
+import com.example.viewmodel.CurrencySyncState
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -49,6 +50,12 @@ fun DashboardScreen(
     lowStockProducts: List<Product>,
     products: List<Product>,
     suppliers: List<Supplier>,
+    selectedCurrency: String,
+    usdExchangeRate: Double,
+    currencySyncState: CurrencySyncState,
+    onCurrencyChange: (String) -> Unit,
+    onExchangeRateChange: (Double) -> Unit,
+    onSyncCurrency: () -> Unit,
     onAddPurchase: (Int, Int, Double, Int?, String, String) -> Unit,
     onAddExpense: (String, Double, String, String) -> Unit,
     onAddPayment: (Int, String, Double, String) -> Unit,
@@ -88,45 +95,208 @@ fun DashboardScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. HEADER SECTION (Bento styling)
+        // 1. HEADER SECTION (Bento styling with live multi-currency toggling)
         item {
-            Row(
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(vertical = 4.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
-                Column {
-                    Text(
-                        text = "ENTERPRISE POS SYSTEM",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        letterSpacing = 1.sp
-                    )
-                    Text(
-                        text = "Live Intelligence",
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF1A1C1E)
-                    )
-                }
-
-                // Initial Avatar Circle
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        text = "HQ",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "CEYVANA ENTERPRISE POS",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = "Live Intelligence",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF1A1C1E)
+                            )
+                        }
+
+                        // Avatar Circle
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "HQ",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Currency Switch (LKR/USD)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Currency:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            listOf("LKR", "USD").forEach { cur ->
+                                FilterChip(
+                                    selected = selectedCurrency == cur,
+                                    onClick = { onCurrencyChange(cur) },
+                                    label = { Text(cur, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                    modifier = Modifier.height(32.dp).testTag("currency_chip_${cur.lowercase()}")
+                                )
+                            }
+                        }
+
+                        // Exchange Rate Setter (editable in settings)
+                        var showRateDialog by remember { mutableStateOf(false) }
+                        var rateInput by remember { mutableStateOf(usdExchangeRate.toString()) }
+                        val isSynced = currencySyncState is CurrencySyncState.Success
+
+                        Button(
+                            onClick = { 
+                                rateInput = usdExchangeRate.toString()
+                                showRateDialog = true 
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSynced) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = if (isSynced) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSecondaryContainer
+                            ),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier
+                                .height(28.dp)
+                                .testTag("exchange_rate_config_btn")
+                        ) {
+                            Icon(
+                                imageVector = if (isSynced) Icons.Default.CheckCircle else Icons.Default.Settings,
+                                contentDescription = null,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isSynced) "Rate: $1 = ${usdExchangeRate.toInt()} LKR (Auto)" else "Rate: $1 = ${usdExchangeRate.toInt()} LKR",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        if (showRateDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showRateDialog = false },
+                                title = { Text("Exchange Rate Setting") },
+                                text = {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("Set exchange rate for dynamic conversion (stored in LKR, converted in real-time):", fontSize = 13.sp)
+                                        OutlinedTextField(
+                                            value = rateInput,
+                                            onValueChange = { rateInput = it },
+                                            label = { Text("1 USD in LKR") },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth().testTag("rate_input_field")
+                                        )
+
+                                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                                        Text("Phone-Powered Automatic Update:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                        Text("Automatically updates the conversion rate through the phone's native internet capabilities.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                                        Spacer(modifier = Modifier.height(4.dp))
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                when (val state = currencySyncState) {
+                                                    is CurrencySyncState.Idle -> {
+                                                        Text("Status: Not Synced", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                                    }
+                                                    is CurrencySyncState.Syncing -> {
+                                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                                                            Text("Syncing rates...", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                                        }
+                                                    }
+                                                    is CurrencySyncState.Success -> {
+                                                        Text("Status: Synced", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                                                        Text("Rate: 1 USD = ${state.rate} LKR", fontSize = 11.sp, color = Color(0xFF2E7D32))
+                                                        Text("Last updated: ${state.lastUpdated}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                    is CurrencySyncState.Error -> {
+                                                        Text("Status: Sync Failed", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                                                        Text(state.message, fontSize = 11.sp, color = MaterialTheme.colorScheme.error, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                                    }
+                                                }
+                                            }
+
+                                            Button(
+                                                onClick = { onSyncCurrency() },
+                                                enabled = currencySyncState !is CurrencySyncState.Syncing,
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                                ),
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                                modifier = Modifier.height(36.dp).testTag("sync_currency_now_btn")
+                                            ) {
+                                                Icon(Icons.Default.Refresh, contentDescription = "Sync", modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Sync", fontSize = 12.sp)
+                                            }
+                                        }
+                                    }
+                                },
+                                confirmButton = {
+                                    TextButton(
+                                        onClick = {
+                                            val parsed = rateInput.toDoubleOrNull()
+                                            if (parsed != null && parsed > 0.0) {
+                                                onExchangeRateChange(parsed)
+                                                showRateDialog = false
+                                            }
+                                        },
+                                        modifier = Modifier.testTag("save_rate_btn")
+                                    ) {
+                                        Text("Save")
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showRateDialog = false }) {
+                                        Text("Cancel")
+                                    }
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -158,7 +328,7 @@ fun DashboardScreen(
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "$${String.format("%,.2f", stats.totalSales)}",
+                                text = CurrencyFormatter.format(stats.totalSales, selectedCurrency, usdExchangeRate),
                                 fontSize = 34.sp,
                                 fontWeight = FontWeight.Black,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -235,6 +405,8 @@ fun DashboardScreen(
                         icon = Icons.Default.Star,
                         iconColor = Color(0xFF0061A4),
                         containerColor = Color(0xFFE3F2FD),
+                        currency = selectedCurrency,
+                        exchangeRate = usdExchangeRate,
                         modifier = Modifier.weight(1f)
                     )
                     BentoKpiCard(
@@ -243,6 +415,8 @@ fun DashboardScreen(
                         icon = Icons.Default.DateRange,
                         iconColor = Color(0xFF00796B),
                         containerColor = Color(0xFFE0F2F1),
+                        currency = selectedCurrency,
+                        exchangeRate = usdExchangeRate,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -258,6 +432,8 @@ fun DashboardScreen(
                         icon = Icons.Default.Check,
                         iconColor = Color(0xFF388E3C),
                         containerColor = Color(0xFFE8F5E9),
+                        currency = selectedCurrency,
+                        exchangeRate = usdExchangeRate,
                         modifier = Modifier.weight(1f)
                     )
                     BentoKpiCard(
@@ -266,6 +442,8 @@ fun DashboardScreen(
                         icon = Icons.Default.Check,
                         iconColor = Color(0xFF2E7D32),
                         containerColor = Color(0xFFE8F5E9),
+                        currency = selectedCurrency,
+                        exchangeRate = usdExchangeRate,
                         border = BorderStroke(1.dp, Color(0xFFC8E6C9)),
                         modifier = Modifier.weight(1f)
                     )
@@ -282,6 +460,8 @@ fun DashboardScreen(
                         icon = Icons.Default.Info,
                         iconColor = Color(0xFF4F46E5),
                         containerColor = Color(0xFFEEF2F6),
+                        currency = selectedCurrency,
+                        exchangeRate = usdExchangeRate,
                         modifier = Modifier.weight(1f)
                     )
                     BentoKpiCard(
@@ -290,6 +470,8 @@ fun DashboardScreen(
                         icon = Icons.Default.Warning,
                         iconColor = if (stats.outstandingPayments > 0.0) Color(0xFFD32F2F) else Color(0xFF555555),
                         containerColor = if (stats.outstandingPayments > 0.0) Color(0xFFFFEBEE) else Color(0xFFF5F5F5),
+                        currency = selectedCurrency,
+                        exchangeRate = usdExchangeRate,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -326,7 +508,12 @@ fun DashboardScreen(
                                 Text("Cash Balance", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF555555))
                             }
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("$${String.format("%,.2f", stats.cashBalance)}", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFE65100))
+                            Text(
+                                text = CurrencyFormatter.format(stats.cashBalance, selectedCurrency, usdExchangeRate),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFFE65100)
+                            )
                         }
                     }
 
@@ -346,7 +533,12 @@ fun DashboardScreen(
                                 Text("Bank Balance", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF555555))
                             }
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("$${String.format("%,.2f", stats.bankBalance)}", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF0D47A1))
+                            Text(
+                                text = CurrencyFormatter.format(stats.bankBalance, selectedCurrency, usdExchangeRate),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF0D47A1)
+                            )
                         }
                     }
                 }
@@ -364,7 +556,12 @@ fun DashboardScreen(
                     ) {
                         Column(modifier = Modifier.padding(10.dp)) {
                             Text("Total Purchases", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-                            Text("$${String.format("%,.2f", stats.totalPurchases)}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.DarkGray)
+                            Text(
+                                text = CurrencyFormatter.format(stats.totalPurchases, selectedCurrency, usdExchangeRate),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.DarkGray
+                            )
                         }
                     }
                     // Expenses
@@ -375,7 +572,12 @@ fun DashboardScreen(
                     ) {
                         Column(modifier = Modifier.padding(10.dp)) {
                             Text("Total Expenses", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-                            Text("$${String.format("%,.2f", stats.totalExpenses)}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.DarkGray)
+                            Text(
+                                text = CurrencyFormatter.format(stats.totalExpenses, selectedCurrency, usdExchangeRate),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.DarkGray
+                            )
                         }
                     }
                     // Tax
@@ -386,7 +588,12 @@ fun DashboardScreen(
                     ) {
                         Column(modifier = Modifier.padding(10.dp)) {
                             Text("Accumulated Tax", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-                            Text("$${String.format("%,.2f", stats.tax)}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.DarkGray)
+                            Text(
+                                text = CurrencyFormatter.format(stats.tax, selectedCurrency, usdExchangeRate),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.DarkGray
+                            )
                         }
                     }
                 }
@@ -557,8 +764,9 @@ fun DashboardScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
+                                        val prefix = if (tx.status == "Returned") "-" else "+"
                                         Text(
-                                            text = if (tx.status == "Returned") "-$${String.format("%,.2f", tx.total)}" else "+$${String.format("%,.2f", tx.total)}",
+                                            text = "$prefix${CurrencyFormatter.format(tx.total, selectedCurrency, usdExchangeRate)}",
                                             fontSize = 15.sp,
                                             fontWeight = FontWeight.ExtraBold,
                                             color = if (tx.status == "Returned") Color(0xFFBA1A1A) else Color(0xFF2E7D32)
@@ -650,18 +858,26 @@ fun DashboardScreen(
                             }
                         }
 
+                        val selectedProd = products.find { it.id == selectedProdId }
+                        val qtyLabel = when {
+                            selectedProd == null -> "Quantity"
+                            else -> "Quantity (${selectedProd.unit})"
+                        }
+
                         OutlinedTextField(
                             value = purchaseQty,
                             onValueChange = { purchaseQty = it },
-                            label = { Text("Quantity") },
+                            label = { Text(qtyLabel) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth()
                         )
 
+                        Spacer(modifier = Modifier.height(10.dp))
+
                         OutlinedTextField(
                             value = purchaseCost,
                             onValueChange = { purchaseCost = it },
-                            label = { Text("Unit Cost Price ($)") },
+                            label = { Text("Unit Cost Price ($selectedCurrency)") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -680,7 +896,7 @@ fun DashboardScreen(
                             }
                             DropdownMenu(
                                 expanded = expandedSupps,
-                                onDismissRequest = {expandedSupps = false}
+                                onDismissRequest = { expandedSupps = false }
                             ) {
                                 suppliers.forEach { s ->
                                     DropdownMenuItem(
@@ -721,11 +937,18 @@ fun DashboardScreen(
                             Button(
                                 onClick = {
                                     val prodId = selectedProdId
-                                    val qty = purchaseQty.toIntOrNull() ?: 0
+                                    val prod = products.find { it.id == prodId }
+                                    val qty = if (prod?.isWeightBased == true) {
+                                        val defaultUnit = if (prod.unit == "Kilogram (kg)") "kg" else "g"
+                                        parseWeightToGrams(purchaseQty, defaultUnit) ?: 0
+                                    } else {
+                                        purchaseQty.toIntOrNull() ?: 0
+                                    }
                                     val cost = purchaseCost.toDoubleOrNull() ?: 0.0
                                     if (prodId != null && qty > 0 && cost > 0.0) {
+                                        val lkrCost = if (selectedCurrency == "USD") cost * usdExchangeRate else cost
                                         val suppName = suppliers.find { it.id == selectedSuppId }?.name ?: "Generic Supplier"
-                                        onAddPurchase(prodId, qty, cost, selectedSuppId, suppName, purchasePaymentMethod)
+                                        onAddPurchase(prodId, qty, lkrCost, selectedSuppId, suppName, purchasePaymentMethod)
                                         showPurchaseDialog = false
                                         // Reset fields
                                         purchaseQty = ""
@@ -777,7 +1000,7 @@ fun DashboardScreen(
                     OutlinedTextField(
                         value = expenseAmount,
                         onValueChange = { expenseAmount = it },
-                        label = { Text("Amount ($)") },
+                        label = { Text("Amount ($selectedCurrency)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -838,7 +1061,8 @@ fun DashboardScreen(
                             onClick = {
                                 val amt = expenseAmount.toDoubleOrNull() ?: 0.0
                                 if (expenseTitle.isNotBlank() && amt > 0.0) {
-                                    onAddExpense(expenseTitle, amt, expenseCategory, expensePaymentMethod)
+                                    val lkrAmt = if (selectedCurrency == "USD") amt * usdExchangeRate else amt
+                                    onAddExpense(expenseTitle, lkrAmt, expenseCategory, expensePaymentMethod)
                                     showExpenseDialog = false
                                     expenseTitle = ""
                                     expenseAmount = ""
@@ -890,7 +1114,7 @@ fun DashboardScreen(
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEEEEEE), contentColor = Color.Black)
                             ) {
                                 Text(
-                                    text = if (currSupp != null) "${currSupp.name} (Credit Owed: $${String.format("%.2f", currSupp.balance)})" else "Click to Select Supplier",
+                                    text = if (currSupp != null) "${currSupp.name} (Credit Owed: ${CurrencyFormatter.format(currSupp.balance, selectedCurrency, usdExchangeRate)})" else "Click to Select Supplier",
                                     fontSize = 13.sp
                                 )
                             }
@@ -900,10 +1124,11 @@ fun DashboardScreen(
                             ) {
                                 suppliers.forEach { s ->
                                     DropdownMenuItem(
-                                        text = { Text("${s.name} (Owed: $${String.format("%.2f", s.balance)})") },
+                                        text = { Text("${s.name} (Owed: ${CurrencyFormatter.format(s.balance, selectedCurrency, usdExchangeRate)})") },
                                         onClick = {
                                             payoutSuppId = s.id
-                                            payoutAmount = s.balance.toString()
+                                            val convertedBalance = if (selectedCurrency == "USD") s.balance / usdExchangeRate else s.balance
+                                            payoutAmount = String.format(Locale.US, "%.2f", convertedBalance)
                                             expandedSupps = false
                                         }
                                     )
@@ -914,7 +1139,7 @@ fun DashboardScreen(
                         OutlinedTextField(
                             value = payoutAmount,
                             onValueChange = { payoutAmount = it },
-                            label = { Text("Payout Amount ($)") },
+                            label = { Text("Payout Amount ($selectedCurrency)") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -948,10 +1173,11 @@ fun DashboardScreen(
                                     val suppId = payoutSuppId
                                     val amt = payoutAmount.toDoubleOrNull() ?: 0.0
                                     if (suppId != null && amt > 0.0) {
-                                        onAddPayment(suppId, "SupplierPayout", amt, payoutPaymentMethod)
+                                        val lkrAmount = if (selectedCurrency == "USD") amt * usdExchangeRate else amt
+                                        onAddPayment(suppId, "SupplierPayout", lkrAmount, payoutPaymentMethod)
                                         // Also record it as an operating expense payout to make cash balance matching perfect!
                                         val suppName = suppliers.find { it.id == suppId }?.name ?: "Supplier"
-                                        onAddExpense("Supplier Credit Paid to $suppName", amt, "Other", payoutPaymentMethod)
+                                        onAddExpense("Supplier Credit Paid to $suppName", lkrAmount, "Other", payoutPaymentMethod)
                                         showPayoutDialog = false
                                         payoutSuppId = null
                                         payoutAmount = ""
@@ -976,6 +1202,8 @@ fun BentoKpiCard(
     icon: ImageVector,
     iconColor: Color,
     containerColor: Color,
+    currency: String,
+    exchangeRate: Double,
     border: BorderStroke? = null,
     modifier: Modifier = Modifier
 ) {
@@ -1021,7 +1249,7 @@ fun BentoKpiCard(
             }
 
             Text(
-                text = "$${String.format("%,.2f", value)}",
+                text = CurrencyFormatter.format(value, currency, exchangeRate),
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Black,
                 color = Color(0xFF1A1C1E)

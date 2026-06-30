@@ -37,7 +37,26 @@ import com.example.data.database.Product
 fun InventoryScreen(
     products: List<Product>,
     categories: List<Category>,
-    onAddProduct: (String, String, Double, Double, Int, Int, String, String) -> Unit,
+    selectedCurrency: String,
+    usdExchangeRate: Double,
+    onAddProduct: (
+        name: String,
+        sku: String,
+        price: Double,
+        costPrice: Double,
+        stock: Int,
+        lowStockThreshold: Int,
+        category: String,
+        brand: String,
+        isWeightBased: Boolean,
+        unit: String,
+        unitType: String,
+        packetWeight: Double,
+        packetWeightUnit: String,
+        openingStock: Int,
+        totalWeightInGrams: Int
+    ) -> Unit,
+    onEditProduct: (Product) -> Unit,
     onDeleteProduct: (Int) -> Unit,
     onUpdateStock: (Int, Int) -> Unit,
     modifier: Modifier = Modifier
@@ -54,6 +73,16 @@ fun InventoryScreen(
     var newThreshold by remember { mutableStateOf("5") }
     var newCategory by remember { mutableStateOf("General") }
     var newBrand by remember { mutableStateOf("Generic") }
+    var selectedUnit by remember { mutableStateOf("Piece") }
+    var unitMenuExpanded by remember { mutableStateOf(false) }
+
+    // Packet fields
+    var newPacketWeight by remember { mutableStateOf("") }
+    var newPacketWeightUnit by remember { mutableStateOf("g") }
+    var packetWeightUnitExpanded by remember { mutableStateOf(false) }
+
+    // Edit state
+    var editingProduct by remember { mutableStateOf<Product?>(null) }
 
     val context = LocalContext.current
 
@@ -62,6 +91,9 @@ fun InventoryScreen(
                 it.sku.contains(searchQuery, ignoreCase = true) ||
                 it.category.contains(searchQuery, ignoreCase = true)
     }
+
+    val isWeightBased = (selectedUnit == "Gram (g)" || selectedUnit == "Kilogram (kg)")
+    val isPacket = (selectedUnit == "Packet")
 
     Box(
         modifier = modifier
@@ -113,7 +145,10 @@ fun InventoryScreen(
                     items(filteredProducts) { product ->
                         InventoryRowItem(
                             product = product,
+                            currency = selectedCurrency,
+                            exchangeRate = usdExchangeRate,
                             onUpdateStock = { qty -> onUpdateStock(product.id, qty) },
+                            onEdit = { editingProduct = product },
                             onDelete = { onDeleteProduct(product.id) }
                         )
                     }
@@ -187,7 +222,7 @@ fun InventoryScreen(
                             OutlinedTextField(
                                 value = newPrice,
                                 onValueChange = { newPrice = it },
-                                label = { Text("Price ($)") },
+                                label = { Text("Price ($selectedCurrency)") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.weight(1f).testTag("add_prod_price"),
                                 singleLine = true
@@ -195,7 +230,7 @@ fun InventoryScreen(
                             OutlinedTextField(
                                 value = newCost,
                                 onValueChange = { newCost = it },
-                                label = { Text("Cost ($)") },
+                                label = { Text("Cost ($selectedCurrency)") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.weight(1f),
                                 singleLine = true
@@ -203,23 +238,184 @@ fun InventoryScreen(
                         }
                         Spacer(modifier = Modifier.height(10.dp))
 
+                        // Unit Selection Dropdown (ALWAYS visible)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Unit of Measurement", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Box {
+                                OutlinedButton(
+                                    onClick = { unitMenuExpanded = true },
+                                    modifier = Modifier.testTag("unit_selector_dropdown_btn")
+                                ) {
+                                    Text(selectedUnit)
+                                }
+                                DropdownMenu(
+                                    expanded = unitMenuExpanded,
+                                    onDismissRequest = { unitMenuExpanded = false }
+                                ) {
+                                    listOf("Packet", "Gram (g)", "Kilogram (kg)", "Piece", "Bottle", "Box").forEach { unit ->
+                                        DropdownMenuItem(
+                                            text = { Text(unit) },
+                                            onClick = {
+                                                selectedUnit = unit
+                                                unitMenuExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Conditional Packet-based input fields
+                        if (isPacket) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedTextField(
+                                    value = newPacketWeight,
+                                    onValueChange = { newPacketWeight = it },
+                                    label = { Text("Weight per Packet") },
+                                    modifier = Modifier.weight(1f).testTag("add_prod_packet_weight"),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                                )
+                                Box(modifier = Modifier.weight(1f)) {
+                                    OutlinedButton(
+                                        onClick = { packetWeightUnitExpanded = true },
+                                        modifier = Modifier.fillMaxWidth().testTag("add_prod_packet_weight_unit_btn")
+                                    ) {
+                                        Text("Unit: $newPacketWeightUnit")
+                                    }
+                                    DropdownMenu(
+                                        expanded = packetWeightUnitExpanded,
+                                        onDismissRequest = { packetWeightUnitExpanded = false }
+                                    ) {
+                                        listOf("g", "kg").forEach { unit ->
+                                            DropdownMenuItem(
+                                                text = { Text(unit) },
+                                                onClick = {
+                                                    newPacketWeightUnit = unit
+                                                    packetWeightUnitExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            val stockLabel = if (isPacket) {
+                                "Opening Stock (Packets)"
+                            } else if (isWeightBased) {
+                                if (selectedUnit == "Kilogram (kg)") "Opening Stock (kg)" else "Opening Stock (g)"
+                            } else {
+                                "Opening Stock"
+                            }
+                            val limitLabel = if (isPacket) {
+                                "Low Limit (Packets)"
+                            } else if (isWeightBased) {
+                                if (selectedUnit == "Kilogram (kg)") "Low Limit (kg)" else "Low Limit (g)"
+                            } else {
+                                "Low Limit"
+                            }
                             OutlinedTextField(
                                 value = newStock,
                                 onValueChange = { newStock = it },
-                                label = { Text("Initial Stock") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                label = { Text(stockLabel) },
                                 modifier = Modifier.weight(1f).testTag("add_prod_stock"),
-                                singleLine = true
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                             )
                             OutlinedTextField(
                                 value = newThreshold,
                                 onValueChange = { newThreshold = it },
-                                label = { Text("Low Limit") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                label = { Text(limitLabel) },
                                 modifier = Modifier.weight(1f),
-                                singleLine = true
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                             )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Real-time weight calculations display
+                        if (isPacket) {
+                            val pWeight = newPacketWeight.toDoubleOrNull() ?: 0.0
+                            val pQty = newStock.toIntOrNull() ?: 0
+                            val totalGrams = if (newPacketWeightUnit == "kg") {
+                                pQty * pWeight * 1000.0
+                            } else {
+                                pQty * pWeight
+                            }
+                            val totalKg = totalGrams / 1000.0
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = "AUTOMATIC WEIGHT CALCULATION",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Total Weight: ${totalGrams.toInt()} g ($totalKg kg)",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        } else if (isWeightBased) {
+                            val defaultUnit = if (selectedUnit == "Kilogram (kg)") "kg" else "g"
+                            val parsedStockGrams = parseWeightToGrams(newStock, defaultUnit)
+                            val parsedThresholdGrams = parseWeightToGrams(newThreshold, defaultUnit)
+
+                            Spacer(modifier = Modifier.height(6.dp))
+                            if (parsedStockGrams != null) {
+                                Text(
+                                    text = "Real-time Conversion: $parsedStockGrams grams (${parsedStockGrams / 1000.0} kg)",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.testTag("real_time_conversion_display")
+                                )
+                            }
+                            
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = "STOCK PREVIEW BEFORE SAVING",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Stock to Save: ${parsedStockGrams ?: 0} g (${(parsedStockGrams ?: 0) / 1000.0} kg)",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = "Low Limit: ${parsedThresholdGrams ?: 0} g (${(parsedThresholdGrams ?: 0) / 1000.0} kg)",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                    )
+                                }
+                            }
                         }
                         Spacer(modifier = Modifier.height(10.dp))
 
@@ -256,12 +452,56 @@ fun InventoryScreen(
                                 onClick = {
                                     val priceVal = newPrice.toDoubleOrNull()
                                     val costVal = newCost.toDoubleOrNull()
-                                    val stockVal = newStock.toIntOrNull()
-                                    val limitVal = newThreshold.toIntOrNull() ?: 5
+                                    
+                                    val stockVal: Int?
+                                    val limitVal: Int
+                                    val totalGrams: Int
+
+                                    if (isPacket) {
+                                        val pWeight = newPacketWeight.toDoubleOrNull() ?: 0.0
+                                        val pQty = newStock.toIntOrNull() ?: 0
+                                        totalGrams = if (newPacketWeightUnit == "kg") {
+                                            (pQty * pWeight * 1000.0).toInt()
+                                        } else {
+                                            (pQty * pWeight).toInt()
+                                        }
+                                        stockVal = totalGrams
+                                        val limitPackets = newThreshold.toIntOrNull() ?: 5
+                                        limitVal = if (newPacketWeightUnit == "kg") {
+                                            (limitPackets * pWeight * 1000.0).toInt()
+                                        } else {
+                                            (limitPackets * pWeight).toInt()
+                                        }
+                                    } else if (isWeightBased) {
+                                        val defaultUnit = if (selectedUnit == "Kilogram (kg)") "kg" else "g"
+                                        stockVal = parseWeightToGrams(newStock, defaultUnit)
+                                        totalGrams = stockVal ?: 0
+                                        limitVal = parseWeightToGrams(newThreshold, defaultUnit) ?: 5000
+                                    } else {
+                                        stockVal = newStock.toIntOrNull()
+                                        totalGrams = 0
+                                        limitVal = newThreshold.toIntOrNull() ?: 5
+                                    }
 
                                     if (newName.isNotBlank() && newSku.isNotBlank() && priceVal != null && costVal != null && stockVal != null) {
+                                        val lkrPrice = if (selectedCurrency == "USD") priceVal * usdExchangeRate else priceVal
+                                        val lkrCost = if (selectedCurrency == "USD") costVal * usdExchangeRate else costVal
                                         onAddProduct(
-                                            newName, newSku, priceVal, costVal, stockVal, limitVal, newCategory, newBrand
+                                            newName,
+                                            newSku,
+                                            lkrPrice,
+                                            lkrCost,
+                                            stockVal,
+                                            limitVal,
+                                            newCategory,
+                                            newBrand,
+                                            isWeightBased,
+                                            selectedUnit,
+                                            selectedUnit,
+                                            if (isPacket) (newPacketWeight.toDoubleOrNull() ?: 0.0) else 0.0,
+                                            if (isPacket) newPacketWeightUnit else "g",
+                                            if (isPacket) (newStock.toIntOrNull() ?: 0) else 0,
+                                            totalGrams
                                         )
                                         // Clear states
                                         newName = ""
@@ -270,15 +510,421 @@ fun InventoryScreen(
                                         newCost = ""
                                         newStock = ""
                                         newThreshold = "5"
+                                        newPacketWeight = ""
+                                        newPacketWeightUnit = "g"
+                                        selectedUnit = "Piece"
                                         showAddDialog = false
                                         Toast.makeText(context, "Product saved successfully!", Toast.LENGTH_SHORT).show()
                                     } else {
-                                        Toast.makeText(context, "Please complete all fields with correct numbers!", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Please complete all fields with correct numbers or format!", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier.weight(1f).testTag("save_prod_btn")
                             ) {
                                 Text("Save Product")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // EDIT PRODUCT DIALOG
+        val editingProductState = editingProduct
+        if (editingProductState != null) {
+            val prod = editingProductState
+            
+            // Local state for edit dialog
+            var editName by remember(prod) { mutableStateOf(prod.name) }
+            var editSku by remember(prod) { mutableStateOf(prod.sku) }
+            var editPrice by remember(prod) { mutableStateOf(if (selectedCurrency == "USD") (prod.price / usdExchangeRate).toString() else prod.price.toString()) }
+            var editCost by remember(prod) { mutableStateOf(if (selectedCurrency == "USD") (prod.costPrice / usdExchangeRate).toString() else prod.costPrice.toString()) }
+            var editUnit by remember(prod) { mutableStateOf(prod.unitType) }
+            var editUnitMenuExpanded by remember { mutableStateOf(false) }
+            
+            val isEditPacket = (editUnit == "Packet")
+            val isEditWeightBased = (editUnit == "Gram (g)" || editUnit == "Kilogram (kg)")
+
+            val initialStockStr = if (prod.unitType == "Packet") {
+                val pWeightG = prod.getPacketWeightInGrams()
+                val packets = if (pWeightG > 0) prod.stock / pWeightG else 0.0
+                if (packets % 1.0 == 0.0) packets.toInt().toString() else packets.toString()
+            } else {
+                getEditStockDisplay(prod.stock, prod.unit)
+            }
+            
+            val initialThresholdStr = if (prod.unitType == "Packet") {
+                val pWeightG = prod.getPacketWeightInGrams()
+                val packets = if (pWeightG > 0) prod.lowStockThreshold / pWeightG else 0.0
+                if (packets % 1.0 == 0.0) packets.toInt().toString() else packets.toString()
+            } else {
+                getEditThresholdDisplay(prod.lowStockThreshold, prod.unit)
+            }
+            
+            var editStock by remember(prod) { mutableStateOf(initialStockStr) }
+            var editThreshold by remember(prod) { mutableStateOf(initialThresholdStr) }
+            var editCategory by remember(prod) { mutableStateOf(prod.category) }
+            var editBrand by remember(prod) { mutableStateOf(prod.brand) }
+
+            // Packet fields for edit
+            var editPacketWeight by remember(prod) { mutableStateOf(if (prod.unitType == "Packet") prod.packetWeight.toString() else "") }
+            var editPacketWeightUnit by remember(prod) { mutableStateOf(if (prod.unitType == "Packet") prod.packetWeightUnit else "g") }
+            var editPacketWeightUnitExpanded by remember { mutableStateOf(false) }
+            
+            Dialog(onDismissRequest = { editingProduct = null }) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    LazyColumn(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        item {
+                            Text(
+                                text = "Edit Product",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        
+                        item {
+                            OutlinedTextField(
+                                value = editName,
+                                onValueChange = { editName = it },
+                                label = { Text("Product Name") },
+                                modifier = Modifier.fillMaxWidth().testTag("edit_prod_name"),
+                                singleLine = true
+                            )
+                        }
+                        
+                        item {
+                            OutlinedTextField(
+                                value = editSku,
+                                onValueChange = { editSku = it },
+                                label = { Text("SKU / Barcode") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                        }
+                        
+                        item {
+                            OutlinedTextField(
+                                value = editBrand,
+                                onValueChange = { editBrand = it },
+                                label = { Text("Brand") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                        }
+                        
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                OutlinedTextField(
+                                    value = editPrice,
+                                    onValueChange = { editPrice = it },
+                                    label = { Text("Price ($selectedCurrency)") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true
+                                )
+                                OutlinedTextField(
+                                    value = editCost,
+                                    onValueChange = { editCost = it },
+                                    label = { Text("Cost Price ($selectedCurrency)") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true
+                                )
+                            }
+                        }
+                        
+                        item {
+                            // Unit dropdown (ALWAYS visible)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Unit of Measurement", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                Box {
+                                    OutlinedButton(
+                                        onClick = { editUnitMenuExpanded = true },
+                                        modifier = Modifier.testTag("edit_unit_selector_btn")
+                                    ) {
+                                        Text(editUnit)
+                                    }
+                                    DropdownMenu(
+                                        expanded = editUnitMenuExpanded,
+                                        onDismissRequest = { editUnitMenuExpanded = false }
+                                    ) {
+                                        listOf("Packet", "Gram (g)", "Kilogram (kg)", "Piece", "Bottle", "Box").forEach { unit ->
+                                            DropdownMenuItem(
+                                                text = { Text(unit) },
+                                                onClick = {
+                                                    editUnit = unit
+                                                    editUnitMenuExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Conditional Packet weight fields for edit dialog
+                        if (isEditPacket) {
+                            item {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = editPacketWeight,
+                                        onValueChange = { editPacketWeight = it },
+                                        label = { Text("Weight per Packet") },
+                                        modifier = Modifier.weight(1f).testTag("edit_prod_packet_weight"),
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                                    )
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        OutlinedButton(
+                                            onClick = { editPacketWeightUnitExpanded = true },
+                                            modifier = Modifier.fillMaxWidth().testTag("edit_prod_packet_weight_unit_btn")
+                                        ) {
+                                            Text("Unit: $editPacketWeightUnit")
+                                        }
+                                        DropdownMenu(
+                                            expanded = editPacketWeightUnitExpanded,
+                                            onDismissRequest = { editPacketWeightUnitExpanded = false }
+                                        ) {
+                                            listOf("g", "kg").forEach { unit ->
+                                                DropdownMenuItem(
+                                                    text = { Text(unit) },
+                                                    onClick = {
+                                                        editPacketWeightUnit = unit
+                                                        editPacketWeightUnitExpanded = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                val stockLabel = if (isEditPacket) {
+                                    "Opening Stock (Packets)"
+                                } else if (isEditWeightBased) {
+                                    if (editUnit == "Kilogram (kg)") "Opening Stock (kg)" else "Opening Stock (g)"
+                                } else {
+                                    "Opening Stock"
+                                }
+                                val limitLabel = if (isEditPacket) {
+                                    "Low Limit (Packets)"
+                                } else if (isEditWeightBased) {
+                                    if (editUnit == "Kilogram (kg)") "Low Limit (kg)" else "Low Limit (g)"
+                                } else {
+                                    "Low Limit"
+                                }
+                                OutlinedTextField(
+                                    value = editStock,
+                                    onValueChange = { editStock = it },
+                                    label = { Text(stockLabel) },
+                                    modifier = Modifier.weight(1f).testTag("edit_prod_stock"),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                                )
+                                OutlinedTextField(
+                                    value = editThreshold,
+                                    onValueChange = { editThreshold = it },
+                                    label = { Text(limitLabel) },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                                )
+                            }
+                        }
+                        
+                        item {
+                            // Real-time weight preview for edit
+                            if (isEditPacket) {
+                                val pWeight = editPacketWeight.toDoubleOrNull() ?: 0.0
+                                val pQty = editStock.toIntOrNull() ?: 0
+                                val totalGrams = if (editPacketWeightUnit == "kg") {
+                                    pQty * pWeight * 1000.0
+                                } else {
+                                    pQty * pWeight
+                                }
+                                val totalKg = totalGrams / 1000.0
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = "AUTOMATIC WEIGHT CALCULATION",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Total Weight: ${totalGrams.toInt()} g ($totalKg kg)",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            } else if (isEditWeightBased) {
+                                val editDefaultUnit = if (editUnit == "Kilogram (kg)") "kg" else "g"
+                                val parsedEditStockGrams = parseWeightToGrams(editStock, editDefaultUnit)
+                                val parsedEditThresholdGrams = parseWeightToGrams(editThreshold, editDefaultUnit)
+                                
+                                Spacer(modifier = Modifier.height(4.dp))
+                                if (parsedEditStockGrams != null) {
+                                    Text(
+                                        text = "Real-time Conversion: $parsedEditStockGrams grams (${parsedEditStockGrams / 1000.0} kg)",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = "STOCK PREVIEW BEFORE SAVING",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Stock to Save: ${parsedEditStockGrams ?: 0} g (${(parsedEditStockGrams ?: 0) / 1000.0} kg)",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = "Low Limit: ${parsedEditThresholdGrams ?: 0} g (${(parsedEditThresholdGrams ?: 0) / 1000.0} kg)",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        
+                        item {
+                            Text("Category Selection", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                val editCats = listOf("Spices", "Tea", "Gemstones", "General")
+                                editCats.forEach { cat ->
+                                    val isSel = editCategory == cat
+                                    FilterChip(
+                                        selected = isSel,
+                                        onClick = { editCategory = cat },
+                                        label = { Text(cat) }
+                                    )
+                                }
+                            }
+                        }
+                        
+                        item {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { editingProduct = null },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Cancel")
+                                }
+                                Button(
+                                    onClick = {
+                                        val priceVal = editPrice.toDoubleOrNull()
+                                        val costVal = editCost.toDoubleOrNull()
+                                        
+                                        val stockVal: Int?
+                                        val limitVal: Int
+                                        val totalGrams: Int
+
+                                        if (isEditPacket) {
+                                            val pWeight = editPacketWeight.toDoubleOrNull() ?: 0.0
+                                            val pQty = editStock.toIntOrNull() ?: 0
+                                            totalGrams = if (editPacketWeightUnit == "kg") {
+                                                (pQty * pWeight * 1000.0).toInt()
+                                            } else {
+                                                (pQty * pWeight).toInt()
+                                            }
+                                            stockVal = totalGrams
+                                            val limitPackets = editThreshold.toIntOrNull() ?: 5
+                                            limitVal = if (editPacketWeightUnit == "kg") {
+                                                (limitPackets * pWeight * 1000.0).toInt()
+                                            } else {
+                                                (limitPackets * pWeight).toInt()
+                                            }
+                                        } else if (isEditWeightBased) {
+                                            val editDefaultUnit = if (editUnit == "Kilogram (kg)") "kg" else "g"
+                                            stockVal = parseWeightToGrams(editStock, editDefaultUnit)
+                                            totalGrams = stockVal ?: 0
+                                            limitVal = parseWeightToGrams(editThreshold, editDefaultUnit) ?: 5000
+                                        } else {
+                                            stockVal = editStock.toIntOrNull()
+                                            totalGrams = 0
+                                            limitVal = editThreshold.toIntOrNull() ?: 5
+                                        }
+                                        
+                                        if (editName.isNotBlank() && editSku.isNotBlank() && priceVal != null && costVal != null && stockVal != null) {
+                                            val lkrPrice = if (selectedCurrency == "USD") priceVal * usdExchangeRate else priceVal
+                                            val lkrCost = if (selectedCurrency == "USD") costVal * usdExchangeRate else costVal
+                                            
+                                            onEditProduct(
+                                                prod.copy(
+                                                    name = editName,
+                                                    sku = editSku,
+                                                    brand = editBrand,
+                                                    price = lkrPrice,
+                                                    costPrice = lkrCost,
+                                                    unit = if (isEditPacket) "Packet" else editUnit,
+                                                    unitType = editUnit,
+                                                    isWeightBased = isEditWeightBased,
+                                                    stock = stockVal,
+                                                    lowStockThreshold = limitVal,
+                                                    category = editCategory,
+                                                    packetWeight = if (isEditPacket) (editPacketWeight.toDoubleOrNull() ?: 0.0) else 0.0,
+                                                    packetWeightUnit = if (isEditPacket) editPacketWeightUnit else "g",
+                                                    openingStock = if (isEditPacket) (editStock.toIntOrNull() ?: 0) else 0,
+                                                    totalWeightInGrams = totalGrams
+                                                )
+                                            )
+                                            editingProduct = null
+                                            Toast.makeText(context, "Product updated successfully!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "Please complete all fields correctly!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f).testTag("save_edit_prod_btn")
+                                ) {
+                                    Text("Save Changes")
+                                }
                             }
                         }
                     }
@@ -291,7 +937,10 @@ fun InventoryScreen(
 @Composable
 fun InventoryRowItem(
     product: Product,
+    currency: String,
+    exchangeRate: Double,
     onUpdateStock: (Int) -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     Card(
@@ -322,8 +971,13 @@ fun InventoryRowItem(
                     )
                 }
 
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                Row {
+                    IconButton(onClick = onEdit, modifier = Modifier.testTag("edit_product_btn_${product.id}")) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit", tint = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
 
@@ -359,36 +1013,124 @@ fun InventoryRowItem(
 
                 // Pricing
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(text = "Price: $${String.format("%.2f", product.price)}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    Text(text = "Cost: $${String.format("%.2f", product.costPrice)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                    val unitSuffix = when (product.unitType) {
+                        "Packet" -> " / pkt"
+                        "Gram (g)" -> " / g"
+                        "Kilogram (kg)" -> " / kg"
+                        else -> " / ${product.unit.lowercase().replace(" (pcs)", "")}"
+                    }
+                    Text(text = "Price: ${CurrencyFormatter.format(product.price, currency, exchangeRate)}$unitSuffix", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text(text = "Cost: ${CurrencyFormatter.format(product.costPrice, currency, exchangeRate)}$unitSuffix", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 }
 
                 // Stock adjusting actions
+                val step = if (product.unitType == "Packet") {
+                    product.getPacketWeightInGrams().toInt().coerceAtLeast(1)
+                } else if (product.isWeightBased) {
+                    250
+                } else {
+                    1
+                }
+                val stockDisplay = product.getStockDisplay()
+
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     IconButton(
-                        onClick = { onUpdateStock((product.stock - 1).coerceAtLeast(0)) },
+                        onClick = { onUpdateStock((product.stock - step).coerceAtLeast(0)) },
                         modifier = Modifier.size(32.dp)
                     ) {
                         Text("−", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     }
                     Text(
-                        text = product.stock.toString(),
+                        text = stockDisplay,
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 16.sp,
-                        modifier = Modifier.width(32.dp),
+                        fontSize = 13.sp,
+                        modifier = Modifier.widthIn(min = 80.dp),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                     IconButton(
-                        onClick = { onUpdateStock(product.stock + 1) },
+                        onClick = { onUpdateStock(product.stock + step) },
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(Icons.Default.Add, contentDescription = "Add Stock", modifier = Modifier.size(16.dp))
                     }
                 }
             }
+        }
+    }
+}
+
+fun parseWeightToGrams(input: String, defaultUnit: String): Int? {
+    val clean = input.trim().lowercase()
+    if (clean.isEmpty()) return null
+    if (clean.endsWith("kg") || clean.endsWith("kilograms") || clean.endsWith("kilogram")) {
+        val numberPart = clean.replace("kg", "").replace("kilograms", "").replace("kilogram", "").trim()
+        val d = numberPart.toDoubleOrNull() ?: return null
+        return (d * 1000).toInt()
+    }
+    if (clean.endsWith("g") || clean.endsWith("grams") || clean.endsWith("gram")) {
+        val numberPart = clean.replace("grams", "").replace("gram", "").replace("g", "").trim()
+        val d = numberPart.toDoubleOrNull() ?: return null
+        return d.toInt()
+    }
+    val d = clean.toDoubleOrNull() ?: return null
+    return if (defaultUnit == "kg") {
+        (d * 1000).toInt()
+    } else {
+        d.toInt()
+    }
+}
+
+fun formatStockDisplay(stock: Int, unit: String): String {
+    return when (unit) {
+        "Kilogram (kg)" -> {
+            val kg = stock / 1000.0
+            if (kg % 1.0 == 0.0) "${kg.toInt()} kg" else "$kg kg"
+        }
+        "Gram (g)" -> {
+            "$stock g"
+        }
+        else -> {
+            val suffix = when (unit) {
+                "Piece (pcs)" -> "pcs"
+                "Pack" -> "packs"
+                "Bottle" -> "bottles"
+                "Box" -> "boxes"
+                else -> unit.lowercase()
+            }
+            "$stock $suffix"
+        }
+    }
+}
+
+fun getEditStockDisplay(stock: Int, unit: String): String {
+    return when (unit) {
+        "Kilogram (kg)" -> {
+            val kg = stock / 1000.0
+            if (kg % 1.0 == 0.0) kg.toInt().toString() else kg.toString()
+        }
+        "Gram (g)" -> {
+            stock.toString()
+        }
+        else -> {
+            stock.toString()
+        }
+    }
+}
+
+fun getEditThresholdDisplay(threshold: Int, unit: String): String {
+    return when (unit) {
+        "Kilogram (kg)" -> {
+            val kg = threshold / 1000.0
+            if (kg % 1.0 == 0.0) kg.toInt().toString() else kg.toString()
+        }
+        "Gram (g)" -> {
+            threshold.toString()
+        }
+        else -> {
+            threshold.toString()
         }
     }
 }

@@ -1,6 +1,9 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
@@ -48,6 +51,13 @@ data class BusinessStats(
     val topProducts: List<Pair<String, Int>> = emptyList()
 )
 
+sealed class CurrencySyncState {
+    object Idle : CurrencySyncState()
+    object Syncing : CurrencySyncState()
+    data class Success(val rate: Double, val lastUpdated: String) : CurrencySyncState()
+    data class Error(val message: String) : CurrencySyncState()
+}
+
 class BusinessViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application)
     private val repository = BusinessRepository(database)
@@ -63,6 +73,9 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
     val purchases = repository.allPurchases.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val payments = repository.allPayments.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val lowStockProducts = repository.lowStockProducts.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val invoices = repository.allInvoices.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val whatsappLogs = repository.allLogs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
 
     // Cart state
     private val _cart = MutableStateFlow<Map<Product, Int>>(emptyMap())
@@ -84,6 +97,73 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
 
     private val _isAiLoading = MutableStateFlow(false)
     val isAiLoading: StateFlow<Boolean> = _isAiLoading.asStateFlow()
+
+    private val _selectedCurrency = MutableStateFlow("LKR")
+    val selectedCurrency: StateFlow<String> = _selectedCurrency.asStateFlow()
+
+    private val _usdExchangeRate = MutableStateFlow(300.0)
+    val usdExchangeRate: StateFlow<Double> = _usdExchangeRate.asStateFlow()
+
+    private val _currencySyncState = MutableStateFlow<CurrencySyncState>(CurrencySyncState.Idle)
+    val currencySyncState: StateFlow<CurrencySyncState> = _currencySyncState.asStateFlow()
+
+    fun setCurrency(currency: String) {
+        _selectedCurrency.value = currency
+    }
+
+    fun setExchangeRate(rate: Double) {
+        if (rate > 0.0) {
+            viewModelScope.launch {
+                val exchangeRate = com.example.data.database.ExchangeRateEntity(
+                    currencyCode = "USD",
+                    rate = rate,
+                    lastUpdated = System.currentTimeMillis()
+                )
+                repository.insertExchangeRate(exchangeRate)
+            }
+        }
+    }
+
+    fun syncExchangeRate() {
+        viewModelScope.launch {
+            _currencySyncState.value = CurrencySyncState.Syncing
+            val context = getApplication<Application>()
+            val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = connectivityManager.activeNetwork
+            val capabilities = connectivityManager.getNetworkCapabilities(network)
+            val isConnected = capabilities != null && (
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+            )
+
+            if (!isConnected) {
+                _currencySyncState.value = CurrencySyncState.Error("No phone internet connection detected.")
+                return@launch
+            }
+
+            try {
+                val response = com.example.data.api.CurrencyRetrofitClient.service.getLatestRates()
+                if (response.result == "success") {
+                    val lkrRate = response.rates["LKR"]
+                    if (lkrRate != null && lkrRate > 0.0) {
+                        val exchangeRate = com.example.data.database.ExchangeRateEntity(
+                            currencyCode = "USD",
+                            rate = lkrRate,
+                            lastUpdated = System.currentTimeMillis()
+                        )
+                        repository.insertExchangeRate(exchangeRate)
+                    } else {
+                        _currencySyncState.value = CurrencySyncState.Error("LKR rate not found in API response.")
+                    }
+                } else {
+                    _currencySyncState.value = CurrencySyncState.Error("API error: ${response.result}")
+                }
+            } catch (e: Exception) {
+                _currencySyncState.value = CurrencySyncState.Error(e.localizedMessage ?: "Network request failed.")
+            }
+        }
+    }
 
     // Combined Business Statistics Flow using standard flow combinations
     val businessStats: StateFlow<BusinessStats> = combine(
@@ -115,7 +195,17 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
         val totalTax = txs.filter { it.status == "Completed" }.sumOf { it.tax }
         val salesCount = txs.filter { it.status == "Completed" }.size
 
-        val inventoryValue = prods.sumOf { it.stock * it.costPrice }
+        val inventoryValue = prods.sumOf { 
+            when {
+                it.isWeightBased -> (it.stock / 1000.0) * it.costPrice
+                it.unitType == "Packet" -> {
+                    val packWeightG = it.getPacketWeightInGrams()
+                    val packets = if (packWeightG > 0) it.stock / packWeightG else 0.0
+                    packets * it.costPrice
+                }
+                else -> it.stock * it.costPrice
+            }
+        }
         val outstandingPayments = supps.sumOf { it.balance }
         val totalPurchases = purchs.sumOf { it.total }
         val totalExpenses = exps.sumOf { it.amount }
@@ -174,6 +264,16 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
 
     init {
         // Absolutely EMPTY on startup - No automatic database seeding
+        viewModelScope.launch {
+            repository.getExchangeRateFlow("USD").collect { rateEntity ->
+                if (rateEntity != null && rateEntity.rate > 0.0) {
+                    _usdExchangeRate.value = rateEntity.rate
+                    val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(rateEntity.lastUpdated))
+                    _currencySyncState.value = CurrencySyncState.Success(rateEntity.rate, timeStr)
+                }
+            }
+        }
+        syncExchangeRate()
     }
 
     private fun getTodayStartTimestamp(): Long {
@@ -243,7 +343,19 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
         }
 
         viewModelScope.launch(Dispatchers.IO) {
-            val subtotal = cartItems.entries.sumOf { it.key.price * it.value }
+            val subtotal = cartItems.entries.sumOf { entry ->
+                val prod = entry.key
+                val qty = entry.value
+                when {
+                    prod.isWeightBased -> prod.price * (qty / 1000.0)
+                    prod.unitType == "Packet" -> {
+                        val packWeightG = prod.getPacketWeightInGrams()
+                        val packets = if (packWeightG > 0) qty / packWeightG else 0.0
+                        packets * prod.price
+                    }
+                    else -> prod.price * qty
+                }
+            }
             val discountAmount = subtotal * (_discountPercentage.value / 100.0)
             val taxAmount = (subtotal - discountAmount) * 0.08 // 8% sales tax
             val finalTotal = subtotal - discountAmount + taxAmount
@@ -272,12 +384,75 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
             }
 
             try {
-                repository.completeTransaction(transaction, itemsToSave)
+                // 1. Complete Sale Transaction
+                val transactionId = repository.completeTransaction(transaction, itemsToSave)
+
+                // 2. Generate Invoice Number (auto-incrementing)
+                val maxInvoiceId = repository.getMaxInvoiceId()
+                val nextInvoiceId = maxInvoiceId + 1
+                val invoiceNumber = "INV-${String.format("%06d", nextInvoiceId)}"
+
+                // 3. Generate PDF Automatically
+                val pdfFile = com.example.ui.InvoicePdfGenerator.generateInvoicePdf(
+                    context = getApplication(),
+                    invoiceNumber = invoiceNumber,
+                    transaction = transaction.copy(id = transactionId.toInt()),
+                    items = itemsToSave,
+                    customer = customer,
+                    currency = _selectedCurrency.value,
+                    exchangeRate = _usdExchangeRate.value
+                )
+
+                // 4. Save Invoice to Database
+                val invoice = Invoice(
+                    invoiceNumber = invoiceNumber,
+                    transactionId = transactionId.toInt(),
+                    pdfPath = pdfFile?.absolutePath,
+                    amountLkr = finalTotal,
+                    customerId = customer?.id,
+                    paymentStatus = if (paymentMethod == "Credit") "Pending" else "Paid"
+                )
+                repository.insertInvoice(invoice)
+
+                // 5. WhatsApp Auto-Send (Option B) if phone exists and credentials configured
+                if (customer != null && customer.phone.isNotBlank()) {
+                    val apiToken = BuildConfig.WHATSAPP_API_TOKEN
+                    val phoneNumberId = BuildConfig.WHATSAPP_PHONE_NUMBER_ID
+                    val isCloudApiConfigured = apiToken.isNotBlank() && apiToken != "YOUR_WHATSAPP_API_TOKEN" &&
+                            phoneNumberId.isNotBlank() && phoneNumberId != "YOUR_WHATSAPP_PHONE_NUMBER_ID"
+
+                    if (isCloudApiConfigured) {
+                        val result = com.example.ui.WhatsAppHelper.sendCloudApiMessage(
+                            phone = customer.phone,
+                            invoiceNumber = invoiceNumber,
+                            customerName = customer.name,
+                            totalLkr = finalTotal,
+                            currency = _selectedCurrency.value,
+                            exchangeRate = _usdExchangeRate.value,
+                            paymentStatus = invoice.paymentStatus
+                        )
+
+                        repository.insertWhatsAppMessageLog(
+                            WhatsAppMessageLog(
+                                invoiceNumber = invoiceNumber,
+                                recipientPhone = customer.phone,
+                                messageContent = "Automatic Cloud API Send for invoice $invoiceNumber. Status: ${result.second}",
+                                status = if (result.first) "Sent" else "Failed"
+                            )
+                        )
+
+                        if (result.first) {
+                            repository.updateInvoice(invoice.copy(whatsappSent = true))
+                        }
+                    }
+                }
+
                 withContext(Dispatchers.Main) {
                     clearCart()
                     onComplete(true)
                 }
             } catch (e: Exception) {
+                e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     onComplete(false)
                 }
@@ -285,8 +460,91 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    suspend fun getItemsForTransaction(transactionId: Int) = repository.getItemsForTransaction(transactionId)
+
+    // Manual/Re-send WhatsApp Message via Cloud API
+    fun sendInvoiceWhatsAppCloudApi(
+        invoiceNumber: String,
+        phone: String,
+        customerName: String,
+        totalLkr: Double,
+        currency: String,
+        exchangeRate: Double,
+        paymentStatus: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = com.example.ui.WhatsAppHelper.sendCloudApiMessage(
+                phone = phone,
+                invoiceNumber = invoiceNumber,
+                customerName = customerName,
+                totalLkr = totalLkr,
+                currency = currency,
+                exchangeRate = exchangeRate,
+                paymentStatus = paymentStatus
+            )
+
+            repository.insertWhatsAppMessageLog(
+                WhatsAppMessageLog(
+                    invoiceNumber = invoiceNumber,
+                    recipientPhone = phone,
+                    messageContent = "Manual Cloud API Send. Response: ${result.second}",
+                    status = if (result.first) "Sent" else "Failed"
+                )
+            )
+
+            if (result.first) {
+                val allInvs = repository.allInvoices.first()
+                val existingInvoice = allInvs.find { it.invoiceNumber == invoiceNumber }
+                if (existingInvoice != null) {
+                    repository.updateInvoice(existingInvoice.copy(whatsappSent = true))
+                }
+            }
+
+            withContext(Dispatchers.Main) {
+                onResult(result.first, result.second)
+            }
+        }
+    }
+
+    // Logging for Client-side Deep-linking Click-To-Chat (Option A)
+    fun logWhatsAppClickToChat(invoiceNumber: String, phone: String, totalLkr: Double) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.insertWhatsAppMessageLog(
+                WhatsAppMessageLog(
+                    invoiceNumber = invoiceNumber,
+                    recipientPhone = phone,
+                    messageContent = "Click-to-chat URL triggered manually for invoice $invoiceNumber (Total: $totalLkr).",
+                    status = "Sent"
+                )
+            )
+            val allInvs = repository.allInvoices.first()
+            val existingInvoice = allInvs.find { it.invoiceNumber == invoiceNumber }
+            if (existingInvoice != null) {
+                repository.updateInvoice(existingInvoice.copy(whatsappSent = true))
+            }
+        }
+    }
+
+
     // Product Management
-    fun addProduct(name: String, sku: String, price: Double, costPrice: Double, stock: Int, threshold: Int, category: String, brand: String) {
+    fun addProduct(
+        name: String,
+        sku: String,
+        price: Double,
+        costPrice: Double,
+        stock: Int,
+        threshold: Int,
+        category: String,
+        brand: String,
+        isWeightBased: Boolean,
+        unit: String,
+        unitType: String,
+        packetWeight: Double,
+        packetWeightUnit: String,
+        openingStock: Int,
+        totalWeightInGrams: Int
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.insertProduct(
                 Product(
@@ -297,9 +555,22 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
                     stock = stock,
                     lowStockThreshold = threshold,
                     category = category,
-                    brand = brand
+                    brand = brand,
+                    isWeightBased = isWeightBased,
+                    unit = unit,
+                    unitType = unitType,
+                    packetWeight = packetWeight,
+                    packetWeightUnit = packetWeightUnit,
+                    openingStock = openingStock,
+                    totalWeightInGrams = totalWeightInGrams
                 )
             )
+        }
+    }
+
+    fun updateProduct(product: Product) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateProduct(product)
         }
     }
 
@@ -321,11 +592,13 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
     // Purchase Management
     fun addPurchase(productId: Int, quantity: Int, costPrice: Double, supplierId: Int?, supplierName: String, paymentMethod: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val total = quantity * costPrice
+            val product = repository.getProductById(productId)
+            val isWeight = product?.isWeightBased == true
+            val total = if (isWeight) (quantity / 1000.0) * costPrice else quantity * costPrice
             repository.insertPurchase(
                 Purchase(
                     productId = productId,
-                    productName = repository.getProductById(productId)?.name ?: "Product",
+                    productName = product?.name ?: "Product",
                     quantity = quantity,
                     costPrice = costPrice,
                     total = total,
@@ -556,14 +829,14 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
 
         // Products
         val mockProducts = listOf(
-            Product(name = "Ceylon Cinnamon (Organic)", sku = "SP-CIN-01", price = 15.0, costPrice = 8.0, stock = 50, lowStockThreshold = 10, category = "Spices", brand = "Ceylon Spice Farms"),
-            Product(name = "Green Cardamom Pods", sku = "SP-CAR-03", price = 25.0, costPrice = 14.0, stock = 35, lowStockThreshold = 5, category = "Spices", brand = "Ceylon Spice Farms"),
-            Product(name = "Whole Black Pepper", sku = "SP-PEP-02", price = 12.0, costPrice = 6.5, stock = 8, lowStockThreshold = 10, category = "Spices", brand = "Ceylon Spice Farms"),
-            Product(name = "Blue Sapphire (GIA Certified 1.8ct)", sku = "GM-SAP-01", price = 1200.0, costPrice = 750.0, stock = 2, lowStockThreshold = 1, category = "Gemstones", brand = "Rathnapura Gems"),
-            Product(name = "Imperial Star Ruby (1.2ct)", sku = "GM-RUB-02", price = 1800.0, costPrice = 1100.0, stock = 1, lowStockThreshold = 1, category = "Gemstones", brand = "Rathnapura Gems"),
-            Product(name = "Uva Highland Pekoe Tea", sku = "TE-UHP-02", price = 14.5, costPrice = 7.0, stock = 4, lowStockThreshold = 10, category = "Tea", brand = "Highland Tea Ltd"),
-            Product(name = "Matcha Ceremonial Grade", sku = "TE-MAT-03", price = 32.0, costPrice = 18.0, stock = 15, lowStockThreshold = 5, category = "Tea", brand = "Highland Tea Ltd"),
-            Product(name = "English Breakfast Tea", sku = "TE-EBT-01", price = 8.5, costPrice = 4.0, stock = 120, lowStockThreshold = 20, category = "Tea", brand = "Highland Tea Ltd")
+            Product(name = "Ceylon Cinnamon (Organic)", sku = "SP-CIN-01", price = 15.0, costPrice = 8.0, stock = 50000, lowStockThreshold = 10000, category = "Spices", brand = "Ceylon Spice Farms", isWeightBased = true, unit = "Kilogram (kg)"),
+            Product(name = "Green Cardamom Pods", sku = "SP-CAR-03", price = 25.0, costPrice = 14.0, stock = 35000, lowStockThreshold = 5000, category = "Spices", brand = "Ceylon Spice Farms", isWeightBased = true, unit = "Kilogram (kg)"),
+            Product(name = "Whole Black Pepper", sku = "SP-PEP-02", price = 12.0, costPrice = 6.5, stock = 8000, lowStockThreshold = 10000, category = "Spices", brand = "Ceylon Spice Farms", isWeightBased = true, unit = "Kilogram (kg)"),
+            Product(name = "Blue Sapphire (GIA Certified 1.8ct)", sku = "GM-SAP-01", price = 1200.0, costPrice = 750.0, stock = 2, lowStockThreshold = 1, category = "Gemstones", brand = "Rathnapura Gems", isWeightBased = false, unit = "Piece (pcs)"),
+            Product(name = "Imperial Star Ruby (1.2ct)", sku = "GM-RUB-02", price = 1800.0, costPrice = 1100.0, stock = 1, lowStockThreshold = 1, category = "Gemstones", brand = "Rathnapura Gems", isWeightBased = false, unit = "Piece (pcs)"),
+            Product(name = "Uva Highland Pekoe Tea", sku = "TE-UHP-02", price = 14.5, costPrice = 7.0, stock = 4000, lowStockThreshold = 10000, category = "Tea", brand = "Highland Tea Ltd", isWeightBased = true, unit = "Kilogram (kg)"),
+            Product(name = "Matcha Ceremonial Grade", sku = "TE-MAT-03", price = 32.0, costPrice = 18.0, stock = 15000, lowStockThreshold = 5000, category = "Tea", brand = "Highland Tea Ltd", isWeightBased = true, unit = "Kilogram (kg)"),
+            Product(name = "English Breakfast Tea", sku = "TE-EBT-01", price = 8.5, costPrice = 4.0, stock = 120000, lowStockThreshold = 20000, category = "Tea", brand = "Highland Tea Ltd", isWeightBased = true, unit = "Kilogram (kg)")
         )
         val addedProducts = mockProducts.map { prod ->
             val id = repository.insertProduct(prod)
@@ -604,8 +877,8 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
         // Transactions (Pre-populate with 3 interesting sales)
         val sales = listOf(
             Pair(addedProducts[3], 1), // Blue Sapphire
-            Pair(addedProducts[0], 2), // Ceylon Cinnamon x 2
-            Pair(addedProducts[6], 1)  // Matcha Ceremonial Grade
+            Pair(addedProducts[0], 2000), // Ceylon Cinnamon x 2kg
+            Pair(addedProducts[6], 1000)  // Matcha Ceremonial Grade x 1kg
         )
 
         // Purchase 1: Gemstones transaction to Helena Visser
@@ -648,8 +921,8 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
         repository.completeTransaction(
             spiceTx,
             listOf(
-                TransactionItem(transactionId = 0, productId = addedProducts[0].id, productName = addedProducts[0].name, quantity = 2, price = 15.0),
-                TransactionItem(transactionId = 0, productId = addedProducts[6].id, productName = addedProducts[6].name, quantity = 1, price = 32.0)
+                TransactionItem(transactionId = 0, productId = addedProducts[0].id, productName = addedProducts[0].name, quantity = 2000, price = 0.015),
+                TransactionItem(transactionId = 0, productId = addedProducts[6].id, productName = addedProducts[6].name, quantity = 1000, price = 0.032)
             )
         )
     }

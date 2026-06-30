@@ -1,5 +1,6 @@
 package com.example.data.database
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -13,8 +14,50 @@ data class Product(
     var stock: Int,
     val lowStockThreshold: Int = 5,
     val category: String = "General",
-    val brand: String = "Generic"
-)
+    val brand: String = "Generic",
+    val isWeightBased: Boolean = false,
+    val unit: String = "Piece (pcs)",
+    @ColumnInfo(name = "unit_type") val unitType: String = "Piece",
+    @ColumnInfo(name = "packet_weight") val packetWeight: Double = 0.0,
+    @ColumnInfo(name = "packet_weight_unit") val packetWeightUnit: String = "g",
+    @ColumnInfo(name = "opening_stock") val openingStock: Int = 0,
+    @ColumnInfo(name = "total_weight_in_grams") val totalWeightInGrams: Int = 0
+) {
+    fun getPacketWeightInGrams(): Double {
+        return if (packetWeightUnit == "kg") packetWeight * 1000.0 else packetWeight
+    }
+
+    fun getStockDisplay(): String {
+        return when (unitType) {
+            "Packet" -> {
+                val pWeightG = getPacketWeightInGrams()
+                val packets = if (pWeightG > 0) stock / pWeightG else 0.0
+                val totalKg = stock / 1000.0
+                val packetStr = if (packets % 1.0 == 0.0) "${packets.toInt()}" else String.format(java.util.Locale.US, "%.1f", packets)
+                val kgStr = if (totalKg % 1.0 == 0.0) "${totalKg.toInt()}" else String.format(java.util.Locale.US, "%.2f", totalKg)
+                "$packetStr Packets ($kgStr kg)"
+            }
+            "Gram (g)" -> {
+                "$stock g"
+            }
+            "Kilogram (kg)" -> {
+                val kg = stock / 1000.0
+                val kgStr = if (kg % 1.0 == 0.0) "${kg.toInt()}" else String.format(java.util.Locale.US, "%.2f", kg)
+                "$kgStr kg"
+            }
+            else -> {
+                val suffix = when (unit) {
+                    "Piece (pcs)" -> "pcs"
+                    "Pack" -> "packs"
+                    "Bottle" -> "bottles"
+                    "Box" -> "boxes"
+                    else -> unit.lowercase()
+                }
+                "$stock $suffix"
+            }
+        }
+    }
+}
 
 @Entity(tableName = "categories")
 data class Category(
@@ -108,3 +151,35 @@ data class Payment(
     val paymentMethod: String, // "Cash", "Bank"
     val timestamp: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "invoices")
+data class Invoice(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val invoiceNumber: String, // format "INV-000001"
+    val transactionId: Int,
+    val timestamp: Long = System.currentTimeMillis(),
+    val pdfPath: String? = null,
+    val whatsappSent: Boolean = false,
+    val emailSent: Boolean = false,
+    val amountLkr: Double,
+    val customerId: Int? = null,
+    val paymentStatus: String // "Paid", "Pending"
+)
+
+@Entity(tableName = "whatsapp_messages_logs")
+data class WhatsAppMessageLog(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val invoiceNumber: String,
+    val recipientPhone: String,
+    val messageContent: String,
+    val status: String, // "Sent", "Failed", "Pending"
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "exchange_rates")
+data class ExchangeRateEntity(
+    @PrimaryKey val currencyCode: String, // e.g. "USD"
+    val rate: Double,                    // rate in LKR (e.g. 300.0)
+    val lastUpdated: Long = System.currentTimeMillis()
+)
+
