@@ -21,7 +21,7 @@ import androidx.room.RoomDatabase
         WhatsAppMessageLog::class,
         ExchangeRateEntity::class
     ],
-    version = 6,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

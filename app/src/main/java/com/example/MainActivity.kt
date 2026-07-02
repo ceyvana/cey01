@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -27,13 +28,21 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.tween
 import com.example.ui.AIScreen
+import com.example.ui.CoverPageScreen
 import com.example.ui.CRMScreen
 import com.example.ui.DashboardScreen
+import com.example.ui.EcommerceScreen
 import com.example.ui.InventoryScreen
 import com.example.ui.POSScreen
 import com.example.ui.theme.MyApplicationTheme
@@ -42,6 +51,7 @@ import com.example.viewmodel.BusinessViewModel
 enum class Screen {
     DASHBOARD,
     POS,
+    SHOP,
     INVENTORY,
     CRM,
     AI
@@ -77,8 +87,23 @@ class MainActivity : ComponentActivity() {
                 val whatsappLogs by viewModel.whatsappLogs.collectAsState()
 
 
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
+                var showCoverPage by rememberSaveable { mutableStateOf(true) }
+
+                AnimatedVisibility(
+                    visible = showCoverPage,
+                    enter = fadeIn(),
+                    exit = fadeOut(animationSpec = tween(600)) + slideOutVertically(targetOffsetY = { -it }, animationSpec = tween(600))
+                ) {
+                    CoverPageScreen(onDismiss = { showCoverPage = false })
+                }
+
+                AnimatedVisibility(
+                    visible = !showCoverPage,
+                    enter = fadeIn(animationSpec = tween(600)),
+                    exit = fadeOut()
+                ) {
+                    Scaffold(
+                        modifier = Modifier.fillMaxSize(),
                     topBar = {
                         if (currentScreen != Screen.DASHBOARD) {
                             TopAppBar(
@@ -87,6 +112,7 @@ class MainActivity : ComponentActivity() {
                                         text = when (currentScreen) {
                                             Screen.DASHBOARD -> "Business Intelligence"
                                             Screen.POS -> "POS Billing Terminal"
+                                            Screen.SHOP -> "E-Shop Terminal"
                                             Screen.INVENTORY -> "Stock Inventory Hub"
                                             Screen.CRM -> "CRM & B2B Directories"
                                             Screen.AI -> "AI Executive Assistant"
@@ -118,6 +144,13 @@ class MainActivity : ComponentActivity() {
                                 icon = { Icon(Icons.Default.ShoppingCart, contentDescription = "POS") },
                                 label = { Text("POS") },
                                 modifier = Modifier.testTag("nav_btn_pos")
+                            )
+                            NavigationBarItem(
+                                selected = currentScreen == Screen.SHOP,
+                                onClick = { currentScreen = Screen.SHOP },
+                                icon = { Icon(Icons.Default.Star, contentDescription = "Shop") },
+                                label = { Text("Shop") },
+                                modifier = Modifier.testTag("nav_btn_shop")
                             )
                             NavigationBarItem(
                                 selected = currentScreen == Screen.INVENTORY,
@@ -173,7 +206,8 @@ class MainActivity : ComponentActivity() {
                                     onSeedDemo = {
                                         viewModel.seedDemoDatabase()
                                     },
-                                    onNavigateToPOS = { currentScreen = Screen.POS }
+                                    onNavigateToPOS = { currentScreen = Screen.POS },
+                                    onShowCoverPage = { showCoverPage = true }
                                 )
                             }
                             Screen.POS -> {
@@ -195,6 +229,31 @@ class MainActivity : ComponentActivity() {
                                     onCheckout = { method, callback -> viewModel.checkout(method, callback) }
                                 )
                             }
+                            Screen.SHOP -> {
+                                EcommerceScreen(
+                                    products = products,
+                                    categories = categories,
+                                    cart = cart,
+                                    selectedCurrency = selectedCurrency,
+                                    usdExchangeRate = usdExchangeRate,
+                                    onAddToCart = { viewModel.addToCart(it) },
+                                    onRemoveFromCart = { viewModel.removeFromCart(it) },
+                                    onUpdateCartQty = { prod, qty -> viewModel.updateCartQty(prod, qty) },
+                                    onClearCart = { viewModel.clearCart() },
+                                    onCheckout = { method, callback -> viewModel.checkout(method, callback) },
+                                    onAddProduct = { name, sku, price, cost, stock, threshold, cat, brand, isWeight, unit, unitType, packWt, packWtUnit, openStock, totalWtGrams, desc, img,
+                                                      sDesc, lDesc, specs, feat, ing, war, ret, ship, care, origin,
+                                                      wholesale, dealer, vip, bulk, minOrder, salePrice ->
+                                        viewModel.addProduct(
+                                            name, sku, price, cost, stock, threshold, cat, brand, isWeight, unit, unitType, packWt, packWtUnit, openStock, totalWtGrams, desc, img,
+                                            sDesc, lDesc, specs, feat, ing, war, ret, ship, care, origin,
+                                            wholesale, dealer, vip, bulk, minOrder, salePrice
+                                        )
+                                    },
+                                    onEditProduct = { viewModel.updateProduct(it) },
+                                    onDeleteProduct = { viewModel.deleteProduct(it) }
+                                )
+                            }
                             Screen.INVENTORY -> {
                                 InventoryScreen(
                                     products = products,
@@ -208,7 +267,10 @@ class MainActivity : ComponentActivity() {
                                         viewModel.updateProduct(product)
                                     },
                                     onDeleteProduct = { viewModel.deleteProduct(it) },
-                                    onUpdateStock = { id, qty -> viewModel.updateStock(id, qty) }
+                                    onUpdateStock = { id, qty -> viewModel.updateStock(id, qty) },
+                                    onBreakBulkProduct = { srcId, dstId, qty, factor ->
+                                        viewModel.breakBulkProduct(srcId, dstId, qty, factor)
+                                    }
                                 )
                             }
                             Screen.CRM -> {
@@ -241,12 +303,17 @@ class MainActivity : ComponentActivity() {
                                     chatHistory = chatHistory,
                                     isLoading = isAiLoading,
                                     onSendMessage = { viewModel.sendChatMessage(it) },
-                                    onClearChat = { viewModel.clearChat() }
+                                    onClearChat = { viewModel.clearChat() },
+                                    products = products,
+                                    businessStats = businessStats,
+                                    selectedCurrency = selectedCurrency,
+                                    usdExchangeRate = usdExchangeRate
                                 )
                             }
                         }
                     }
                 }
+                } // End of AnimatedVisibility
             }
         }
     }

@@ -56,7 +56,7 @@ fun POSScreen(
     onSelectCustomer: (Customer?) -> Unit,
     onSetDiscount: (Double) -> Unit,
     onClearCart: () -> Unit,
-    onCheckout: (String, (Boolean) -> Unit) -> Unit,
+    onCheckout: (String, (Boolean, String?) -> Unit) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -64,6 +64,7 @@ fun POSScreen(
     var barcodeInput by remember { mutableStateOf("") }
     var showCheckoutDialog by remember { mutableStateOf(false) }
     var showReceiptDialog by remember { mutableStateOf(false) }
+    var lastGeneratedInvoicePdfPath by remember { mutableStateOf<String?>(null) }
     var activePaymentMethod by remember { mutableStateOf("Cash") }
     var showCustomerSelector by remember { mutableStateOf(false) }
 
@@ -1009,10 +1010,14 @@ fun POSScreen(
                         }
                         Button(
                             onClick = {
-                                onCheckout(activePaymentMethod) { success ->
+                                onCheckout(activePaymentMethod) { success, pdfPath ->
                                     if (success) {
+                                        lastGeneratedInvoicePdfPath = pdfPath
                                         showCheckoutDialog = false
                                         showReceiptDialog = true
+                                        pdfPath?.let { path ->
+                                            openPdfFile(context, path)
+                                        }
                                     } else {
                                         Toast.makeText(context, "Error saving sale!", Toast.LENGTH_SHORT).show()
                                     }
@@ -1192,6 +1197,20 @@ fun POSScreen(
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
+
+                    lastGeneratedInvoicePdfPath?.let { path ->
+                        Button(
+                            onClick = { openPdfFile(context, path) },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                            modifier = Modifier.fillMaxWidth().testTag("btn_view_generated_pdf_invoice")
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Open PDF Invoice")
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
                     Button(
                         onClick = { showReceiptDialog = false },
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),

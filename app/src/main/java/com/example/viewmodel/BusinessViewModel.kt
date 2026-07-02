@@ -128,14 +128,23 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             _currencySyncState.value = CurrencySyncState.Syncing
             val context = getApplication<Application>()
-            val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val network = connectivityManager.activeNetwork
-            val capabilities = connectivityManager.getNetworkCapabilities(network)
-            val isConnected = capabilities != null && (
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
-            )
+            var isConnected = false
+            try {
+                val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                if (connectivityManager != null) {
+                    val network = connectivityManager.activeNetwork
+                    val capabilities = connectivityManager.getNetworkCapabilities(network)
+                    isConnected = capabilities != null && (
+                        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                    )
+                }
+            } catch (e: Exception) {
+                // If checking connectivity fails for any reason (e.g. security permissions, testing framework),
+                // fall back to assuming we are connected so the API call is still attempted.
+                isConnected = true
+            }
 
             if (!isConnected) {
                 _currencySyncState.value = CurrencySyncState.Error("No phone internet connection detected.")
@@ -335,10 +344,10 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
         _discountPercentage.value = 0.0
     }
 
-    fun checkout(paymentMethod: String, onComplete: (Boolean) -> Unit) {
+    fun checkout(paymentMethod: String, onComplete: (Boolean, String?) -> Unit) {
         val cartItems = _cart.value
         if (cartItems.isEmpty()) {
-            onComplete(false)
+            onComplete(false, null)
             return
         }
 
@@ -447,14 +456,16 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
 
+                val pdfPathResult = pdfFile?.absolutePath
+
                 withContext(Dispatchers.Main) {
                     clearCart()
-                    onComplete(true)
+                    onComplete(true, pdfPathResult)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
-                    onComplete(false)
+                    onComplete(false, null)
                 }
             }
         }
@@ -543,7 +554,25 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
         packetWeight: Double,
         packetWeightUnit: String,
         openingStock: Int,
-        totalWeightInGrams: Int
+        totalWeightInGrams: Int,
+        description: String = "Premium quality product with exceptional flavor, sourcing, and texture.",
+        imageUrl: String = "",
+        specifications: String = "",
+        features: String = "",
+        ingredients: String = "",
+        warranty: String = "",
+        returnPolicy: String = "",
+        shippingInfo: String = "",
+        careInstructions: String = "",
+        countryOfOrigin: String = "",
+        shortDescription: String = "",
+        longDescription: String = "",
+        wholesalePrice: Double = 0.0,
+        dealerPrice: Double = 0.0,
+        vipPrice: Double = 0.0,
+        bulkPrice: Double = 0.0,
+        minimumOrderPrice: Double = 0.0,
+        salePrice: Double = 0.0
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.insertProduct(
@@ -562,7 +591,25 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
                     packetWeight = packetWeight,
                     packetWeightUnit = packetWeightUnit,
                     openingStock = openingStock,
-                    totalWeightInGrams = totalWeightInGrams
+                    totalWeightInGrams = totalWeightInGrams,
+                    description = description,
+                    imageUrl = imageUrl,
+                    specifications = specifications,
+                    features = features,
+                    ingredients = ingredients,
+                    warranty = warranty,
+                    returnPolicy = returnPolicy,
+                    shippingInfo = shippingInfo,
+                    careInstructions = careInstructions,
+                    countryOfOrigin = countryOfOrigin,
+                    shortDescription = shortDescription,
+                    longDescription = longDescription,
+                    wholesalePrice = wholesalePrice,
+                    dealerPrice = dealerPrice,
+                    vipPrice = vipPrice,
+                    bulkPrice = bulkPrice,
+                    minimumOrderPrice = minimumOrderPrice,
+                    salePrice = salePrice
                 )
             )
         }
@@ -585,6 +632,39 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
             val product = repository.getProductById(id)
             if (product != null) {
                 repository.updateProduct(product.copy(stock = newStock))
+            }
+        }
+    }
+
+    fun breakBulkProduct(sourceProductId: Int, destProductId: Int, qtyToBreak: Int, conversionFactor: Double) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val sourceProduct = repository.getProductById(sourceProductId) ?: return@launch
+            val destProduct = repository.getProductById(destProductId) ?: return@launch
+            
+            val sourceDeduction = if (sourceProduct.unitType == "Packet") {
+                val packWeightG = sourceProduct.getPacketWeightInGrams()
+                (qtyToBreak * packWeightG).toInt()
+            } else {
+                qtyToBreak
+            }
+            
+            if (sourceProduct.stock >= sourceDeduction) {
+                val updatedSource = sourceProduct.copy(stock = (sourceProduct.stock - sourceDeduction).coerceAtLeast(0))
+                repository.updateProduct(updatedSource)
+                
+                val destAddition = if (destProduct.unitType == "Packet") {
+                    val destPackWeightG = destProduct.getPacketWeightInGrams()
+                    if (destPackWeightG > 0) {
+                        ((qtyToBreak * conversionFactor) * destPackWeightG).toInt()
+                    } else {
+                        (qtyToBreak * conversionFactor).toInt()
+                    }
+                } else {
+                    (qtyToBreak * conversionFactor).toInt()
+                }
+                
+                val updatedDest = destProduct.copy(stock = destProduct.stock + destAddition)
+                repository.updateProduct(updatedDest)
             }
         }
     }
@@ -829,7 +909,27 @@ class BusinessViewModel(application: Application) : AndroidViewModel(application
 
         // Products
         val mockProducts = listOf(
-            Product(name = "Ceylon Cinnamon (Organic)", sku = "SP-CIN-01", price = 15.0, costPrice = 8.0, stock = 50000, lowStockThreshold = 10000, category = "Spices", brand = "Ceylon Spice Farms", isWeightBased = true, unit = "Kilogram (kg)"),
+            Product(
+                name = "Premium Ceylon Cinnamon",
+                sku = "SP-CIN-01",
+                price = 1500.0,
+                costPrice = 700.0,
+                stock = 50000,
+                lowStockThreshold = 10000,
+                category = "Spices",
+                brand = "Ceylon Spice Farms",
+                isWeightBased = true,
+                unit = "Kilogram (kg)",
+                shortDescription = "100% Pure Sri Lankan Cinnamon.",
+                description = "Harvested from the finest plantations of Sri Lanka.\nRich aroma.\nNatural.\nNo additives.\nExport quality.",
+                currency = "LKR",
+                salePrice = 1200.0,
+                wholesalePrice = 950.0,
+                dealerPrice = 900.0,
+                vipPrice = 850.0,
+                bulkPrice = 800.0,
+                minimumOrderPrice = 1000.0
+            ),
             Product(name = "Green Cardamom Pods", sku = "SP-CAR-03", price = 25.0, costPrice = 14.0, stock = 35000, lowStockThreshold = 5000, category = "Spices", brand = "Ceylon Spice Farms", isWeightBased = true, unit = "Kilogram (kg)"),
             Product(name = "Whole Black Pepper", sku = "SP-PEP-02", price = 12.0, costPrice = 6.5, stock = 8000, lowStockThreshold = 10000, category = "Spices", brand = "Ceylon Spice Farms", isWeightBased = true, unit = "Kilogram (kg)"),
             Product(name = "Blue Sapphire (GIA Certified 1.8ct)", sku = "GM-SAP-01", price = 1200.0, costPrice = 750.0, stock = 2, lowStockThreshold = 1, category = "Gemstones", brand = "Rathnapura Gems", isWeightBased = false, unit = "Piece (pcs)"),

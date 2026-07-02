@@ -888,3 +888,27 @@ fun emailPdfFile(context: Context, emailAddress: String, pdfPath: String, invoic
     }
 }
 
+fun openPdfFile(context: Context, pdfPath: String) {
+    val file = File(pdfPath)
+    if (!file.exists()) {
+        Toast.makeText(context, "Invoice PDF file not found.", Toast.LENGTH_SHORT).show()
+        return
+    }
+    try {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "com.example.fileprovider",
+            file
+        )
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/pdf")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        e.printStackTrace()
+        sharePdfFile(context, pdfPath, file.nameWithoutExtension)
+    }
+}
+

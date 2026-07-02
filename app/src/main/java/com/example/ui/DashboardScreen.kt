@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -62,6 +63,7 @@ fun DashboardScreen(
     onReturnTransaction: (Int) -> Unit,
     onSeedDemo: () -> Unit,
     onNavigateToPOS: () -> Unit,
+    onShowCoverPage: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // Dialog Triggers
@@ -130,20 +132,45 @@ fun DashboardScreen(
                             )
                         }
 
-                        // Avatar Circle
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primaryContainer),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = "HQ",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                            OutlinedButton(
+                                onClick = onShowCoverPage,
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier
+                                    .height(32.dp)
+                                    .testTag("btn_show_cover_page"),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Cover", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            // Avatar Circle
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "HQ",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
                         }
                     }
 
@@ -661,6 +688,197 @@ fun DashboardScreen(
             }
         }
 
+        // SMART RATE AUTO-CALCULATOR & CONVERTER BENTO CARD
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("exchange_rate_auto_calculator_card"),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    var calculatorModeIsRateDiscovery by remember { mutableStateOf(false) }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "Smart Rate Auto-Calculator",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = if (calculatorModeIsRateDiscovery) "Rate Finder" else "Converter",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                            )
+                            Switch(
+                                checked = calculatorModeIsRateDiscovery,
+                                onCheckedChange = { calculatorModeIsRateDiscovery = it },
+                                modifier = Modifier.scale(0.7f).testTag("calc_mode_switch")
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = if (calculatorModeIsRateDiscovery) 
+                            "Input the USD price and the LKR amount you actually paid to auto-calculate the exact conversion exchange rate." 
+                            else "Enter any amount in USD or LKR to convert instantly using the live system rate ($1 = ${usdExchangeRate.toInt()} LKR).",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    var usdAmountInput by remember { mutableStateOf("") }
+                    var lkrAmountInput by remember { mutableStateOf("") }
+
+                    // Sync states depending on mode
+                    if (!calculatorModeIsRateDiscovery) {
+                        // Converter mode: changes in one field update the other based on the current exchange rate
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = usdAmountInput,
+                                onValueChange = { input ->
+                                    usdAmountInput = input
+                                    val numeric = input.toDoubleOrNull()
+                                    if (numeric != null) {
+                                        lkrAmountInput = String.format(Locale.US, "%.2f", numeric * usdExchangeRate)
+                                    } else if (input.isEmpty()) {
+                                        lkrAmountInput = ""
+                                    }
+                                },
+                                label = { Text("Amount ($ USD)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f).testTag("calc_usd_field")
+                            )
+
+                            OutlinedTextField(
+                                value = lkrAmountInput,
+                                onValueChange = { input ->
+                                    lkrAmountInput = input
+                                    val numeric = input.toDoubleOrNull()
+                                    if (numeric != null) {
+                                        usdAmountInput = String.format(Locale.US, "%.2f", numeric / usdExchangeRate)
+                                    } else if (input.isEmpty()) {
+                                        usdAmountInput = ""
+                                    }
+                                },
+                                label = { Text("Amount (Rs LKR)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f).testTag("calc_lkr_field")
+                            )
+                        }
+                    } else {
+                        // Rate finder mode: user inputs both, we auto-calculate the rate!
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = usdAmountInput,
+                                onValueChange = { usdAmountInput = it },
+                                label = { Text("Bill USD ($)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f).testTag("calc_rate_usd_field")
+                            )
+
+                            OutlinedTextField(
+                                value = lkrAmountInput,
+                                onValueChange = { lkrAmountInput = it },
+                                label = { Text("Settled LKR (Rs)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f).testTag("calc_rate_lkr_field")
+                            )
+                        }
+
+                        val usdVal = usdAmountInput.toDoubleOrNull() ?: 0.0
+                        val lkrVal = lkrAmountInput.toDoubleOrNull() ?: 0.0
+                        val calculatedRate = if (usdVal > 0.0 && lkrVal > 0.0) lkrVal / usdVal else 0.0
+
+                        if (calculatedRate > 0.0) {
+                            val formattedRate = String.format(Locale.US, "%.2f", calculatedRate)
+                            
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = "Calculated Exchange Rate:",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "1 USD = $formattedRate LKR",
+                                            fontSize = 18.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        
+                                        Button(
+                                            onClick = {
+                                                onExchangeRateChange(calculatedRate)
+                                                // Reset fields to confirm
+                                                usdAmountInput = ""
+                                                lkrAmountInput = ""
+                                            },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.primary,
+                                                contentColor = MaterialTheme.colorScheme.onPrimary
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                            modifier = Modifier.height(32.dp).testTag("apply_calculated_rate_btn")
+                                        ) {
+                                            Text("Set System Rate", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 6. OPERATIONAL LEDGERS METADATA SUMMARY
         item {
             Card(
@@ -882,6 +1100,24 @@ fun DashboardScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
 
+                        val costValue = purchaseCost.toDoubleOrNull() ?: 0.0
+                        if (costValue > 0.0) {
+                            val convertedText = if (selectedCurrency == "USD") {
+                                "≈ LKR ${String.format(Locale.US, "%,.2f", costValue * usdExchangeRate)}"
+                            } else {
+                                "≈ USD ${String.format(Locale.US, "%,.2f", costValue / usdExchangeRate)}"
+                            }
+                            Text(
+                                text = convertedText,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
                         Text("Select Supplier (Optional):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         var expandedSupps by remember { mutableStateOf(false) }
                         val currSupp = suppliers.find { it.id == selectedSuppId }
@@ -1004,6 +1240,24 @@ fun DashboardScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    val expValue = expenseAmount.toDoubleOrNull() ?: 0.0
+                    if (expValue > 0.0) {
+                        val convertedText = if (selectedCurrency == "USD") {
+                            "≈ LKR ${String.format(Locale.US, "%,.2f", expValue * usdExchangeRate)}"
+                        } else {
+                            "≈ USD ${String.format(Locale.US, "%,.2f", expValue / usdExchangeRate)}"
+                        }
+                        Text(
+                            text = convertedText,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     Text("Category:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     var expandedCats by remember { mutableStateOf(false) }
@@ -1143,6 +1397,24 @@ fun DashboardScreen(
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth()
                         )
+
+                        val payoutValue = payoutAmount.toDoubleOrNull() ?: 0.0
+                        if (payoutValue > 0.0) {
+                            val convertedText = if (selectedCurrency == "USD") {
+                                "≈ LKR ${String.format(Locale.US, "%,.2f", payoutValue * usdExchangeRate)}"
+                            } else {
+                                "≈ USD ${String.format(Locale.US, "%,.2f", payoutValue / usdExchangeRate)}"
+                            }
+                            Text(
+                                text = convertedText,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         Text("Payment Method:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

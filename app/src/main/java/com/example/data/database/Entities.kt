@@ -21,7 +21,46 @@ data class Product(
     @ColumnInfo(name = "packet_weight") val packetWeight: Double = 0.0,
     @ColumnInfo(name = "packet_weight_unit") val packetWeightUnit: String = "g",
     @ColumnInfo(name = "opening_stock") val openingStock: Int = 0,
-    @ColumnInfo(name = "total_weight_in_grams") val totalWeightInGrams: Int = 0
+    @ColumnInfo(name = "total_weight_in_grams") val totalWeightInGrams: Int = 0,
+    val description: String = "Premium quality product with exceptional flavor, sourcing, and texture.",
+    val imageUrl: String = "",
+    
+    // Enterprise Commerce Platform fields
+    val tenantId: String = "tenant_default",
+    val storeId: String = "store_default",
+    val barcode: String = "",
+    val slug: String = "",
+    val shortDescription: String = "",
+    val longDescription: String = "",
+    val salePrice: Double = 0.0,
+    val currency: String = "USD",
+    val taxClass: String = "Standard",
+    val brandId: Int = 0,
+    val categoryId: Int = 0,
+    val status: String = "Active",
+    val visibility: String = "Visible",
+    val featured: Boolean = false,
+    val published: Boolean = true,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val deletedAt: Long? = null,
+    
+    // Detailed description specifications & details
+    val specifications: String = "",
+    val features: String = "",
+    val ingredients: String = "",
+    val warranty: String = "",
+    val returnPolicy: String = "",
+    val shippingInfo: String = "",
+    val careInstructions: String = "",
+    val countryOfOrigin: String = "",
+
+    // Multiple pricing tiers
+    val wholesalePrice: Double = 0.0,
+    val dealerPrice: Double = 0.0,
+    val vipPrice: Double = 0.0,
+    val bulkPrice: Double = 0.0,
+    val minimumOrderPrice: Double = 0.0
 ) {
     fun getPacketWeightInGrams(): Double {
         return if (packetWeightUnit == "kg") packetWeight * 1000.0 else packetWeight

@@ -33,8 +33,8 @@ class MyApplication : Application() {
                 ExistingPeriodicWorkPolicy.KEEP, // Keep existing work to avoid resetting schedule
                 periodicWorkRequest
             )
-        } catch (e: IllegalStateException) {
-            // WorkManager might not be initialized in some environments like Unit/Robolectric Tests
+        } catch (e: Throwable) {
+            // WorkManager might not be initialized or available in some environments
             e.printStackTrace()
         }
     }

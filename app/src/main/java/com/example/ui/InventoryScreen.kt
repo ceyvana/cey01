@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.data.database.Category
 import com.example.data.database.Product
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,10 +60,12 @@ fun InventoryScreen(
     onEditProduct: (Product) -> Unit,
     onDeleteProduct: (Int) -> Unit,
     onUpdateStock: (Int, Int) -> Unit,
+    onBreakBulkProduct: (sourceProductId: Int, destProductId: Int, quantity: Int, conversionFactor: Double) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
+    var activeTab by remember { mutableStateOf(0) } // 0 = Stock Inventory, 1 = Bulk Decanting Terminal
 
     // Dialog state
     var newName by remember { mutableStateOf("") }
@@ -103,56 +106,86 @@ fun InventoryScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
         ) {
-            // Search field
-            TextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Filter products by name/SKU/category...") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("inventory_search"),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                ),
-                singleLine = true
-            )
+            // Tab Row at the top!
+            TabRow(selectedTabIndex = activeTab) {
+                Tab(
+                    selected = activeTab == 0,
+                    onClick = { activeTab = 0 },
+                    text = { Text("Stock Inventory Hub", fontWeight = FontWeight.Bold) },
+                    icon = { Icon(Icons.Default.List, contentDescription = "Stock Inventory") }
+                )
+                Tab(
+                    selected = activeTab == 1,
+                    onClick = { activeTab = 1 },
+                    text = { Text("Bulk Decanter", fontWeight = FontWeight.Bold) },
+                    icon = { Icon(Icons.Default.Refresh, contentDescription = "Bulk Breakage") }
+                )
+            }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Inventory List
-            if (filteredProducts.isEmpty()) {
-                Box(
+            if (activeTab == 0) {
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
-                    Text(
-                        text = "No products found in database.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
+                    // Search field
+                    TextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Filter products by name/SKU/category...") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("inventory_search"),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        singleLine = true
                     )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(filteredProducts) { product ->
-                        InventoryRowItem(
-                            product = product,
-                            currency = selectedCurrency,
-                            exchangeRate = usdExchangeRate,
-                            onUpdateStock = { qty -> onUpdateStock(product.id, qty) },
-                            onEdit = { editingProduct = product },
-                            onDelete = { onDeleteProduct(product.id) }
-                        )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Inventory List
+                    if (filteredProducts.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "No products found in database.",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            items(filteredProducts) { product ->
+                                InventoryRowItem(
+                                    product = product,
+                                    currency = selectedCurrency,
+                                    exchangeRate = usdExchangeRate,
+                                    onUpdateStock = { qty -> onUpdateStock(product.id, qty) },
+                                    onEdit = { editingProduct = product },
+                                    onDelete = { onDeleteProduct(product.id) }
+                                )
+                            }
+                        }
                     }
                 }
+            } else {
+                BulkDecanterUI(
+                    products = products,
+                    onBreakBulkProduct = onBreakBulkProduct
+                )
             }
         }
 
@@ -1131,6 +1164,295 @@ fun getEditThresholdDisplay(threshold: Int, unit: String): String {
         }
         else -> {
             threshold.toString()
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BulkDecanterUI(
+    products: List<Product>,
+    onBreakBulkProduct: (sourceProductId: Int, destProductId: Int, quantity: Int, conversionFactor: Double) -> Unit
+) {
+    var sourceProduct by remember { mutableStateOf<Product?>(null) }
+    var destProduct by remember { mutableStateOf<Product?>(null) }
+    var qtyToBreakInput by remember { mutableStateOf("1") }
+    var customFactorInput by remember { mutableStateOf("") }
+    var sourceExpanded by remember { mutableStateOf(false) }
+    var destExpanded by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+
+    val calculatedFactor = remember(sourceProduct, destProduct) {
+        if (sourceProduct != null && destProduct != null) {
+            when {
+                sourceProduct!!.unitType == "Packet" && destProduct!!.unitType == "Gram (g)" -> {
+                    sourceProduct!!.getPacketWeightInGrams()
+                }
+                sourceProduct!!.unitType == "Packet" && destProduct!!.unitType == "Kilogram (kg)" -> {
+                    sourceProduct!!.getPacketWeightInGrams() / 1000.0
+                }
+                sourceProduct!!.unitType == "Kilogram (kg)" && destProduct!!.unitType == "Gram (g)" -> {
+                    1000.0
+                }
+                else -> 1.0
+            }
+        } else {
+            1.0
+        }
+    }
+
+    val conversionFactor = customFactorInput.toDoubleOrNull() ?: calculatedFactor
+    val qtyToBreak = qtyToBreakInput.toIntOrNull() ?: 0
+
+    val hasEnoughStock = remember(sourceProduct, qtyToBreak) {
+        if (sourceProduct != null) {
+            val sourceDeduction = if (sourceProduct!!.unitType == "Packet") {
+                val packWeightG = sourceProduct!!.getPacketWeightInGrams()
+                (qtyToBreak * packWeightG).toInt()
+            } else {
+                qtyToBreak
+            }
+            sourceProduct!!.stock >= sourceDeduction
+        } else {
+            false
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "B2B Bulk Decanter Terminal",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Dismantle large cargo packs, wholesale crates, or weight packets into finer loose commodities (e.g. breaking a 400g Tea Packet into raw loose grams).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                )
+            }
+        }
+
+        Text("Step 1: Select Source Bulk Product", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = { sourceExpanded = true },
+                modifier = Modifier.fillMaxWidth().testTag("decanter_source_selector_btn"),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = sourceProduct?.let { "${it.name} (${it.getStockDisplay()})" } ?: "Select Source Product (e.g. Packet, kg)",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Dropdown")
+                }
+            }
+            DropdownMenu(
+                expanded = sourceExpanded,
+                onDismissRequest = { sourceExpanded = false },
+                modifier = Modifier.fillMaxWidth(0.9f)
+            ) {
+                products.forEach { prod ->
+                    DropdownMenuItem(
+                        text = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(prod.name, fontWeight = FontWeight.Medium)
+                                SuggestionChip(
+                                    onClick = {},
+                                    label = { Text(prod.unitType, fontSize = 10.sp) }
+                                )
+                                Text("Stock: ${prod.getStockDisplay()}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            }
+                        },
+                        onClick = {
+                            sourceProduct = prod
+                            sourceExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
+        Text("Step 2: Select Destination Loose Product", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = { destExpanded = true },
+                modifier = Modifier.fillMaxWidth().testTag("decanter_dest_selector_btn"),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = destProduct?.let { "${it.name} (${it.getStockDisplay()})" } ?: "Select Destination Product (e.g. Gram, Piece)",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Dropdown")
+                }
+            }
+            DropdownMenu(
+                expanded = destExpanded,
+                onDismissRequest = { destExpanded = false },
+                modifier = Modifier.fillMaxWidth(0.9f)
+            ) {
+                products.forEach { prod ->
+                    DropdownMenuItem(
+                        text = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(prod.name, fontWeight = FontWeight.Medium)
+                                SuggestionChip(
+                                    onClick = {},
+                                    label = { Text(prod.unitType, fontSize = 10.sp) }
+                                )
+                                Text("Stock: ${prod.getStockDisplay()}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            }
+                        },
+                        onClick = {
+                            destProduct = prod
+                            destExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(
+                value = qtyToBreakInput,
+                onValueChange = { qtyToBreakInput = it },
+                label = { Text("Qty of Source to Decant") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f).testTag("decanter_qty_input"),
+                singleLine = true
+            )
+
+            OutlinedTextField(
+                value = customFactorInput,
+                onValueChange = { customFactorInput = it },
+                placeholder = { Text(String.format(Locale.US, "%.1f", calculatedFactor)) },
+                label = { Text("Conversion Factor") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f).testTag("decanter_factor_input"),
+                singleLine = true,
+                supportingText = { Text("Units produced per 1 source") }
+            )
+        }
+
+        if (sourceProduct != null && destProduct != null && qtyToBreak > 0) {
+            val sourceDeductionAmt = if (sourceProduct!!.unitType == "Packet") {
+                val packWeightG = sourceProduct!!.getPacketWeightInGrams()
+                (qtyToBreak * packWeightG).toInt()
+            } else {
+                qtyToBreak
+            }
+
+            val sourceDeductionStr = if (sourceProduct!!.unitType == "Packet") {
+                "$qtyToBreak Packets (${sourceDeductionAmt}g)"
+            } else {
+                "$qtyToBreak ${sourceProduct!!.unit}"
+            }
+
+            val destAdditionAmt = if (destProduct!!.unitType == "Packet") {
+                val destPackWeightG = destProduct!!.getPacketWeightInGrams()
+                if (destPackWeightG > 0) {
+                    ((qtyToBreak * conversionFactor) * destPackWeightG).toInt()
+                } else {
+                    (qtyToBreak * conversionFactor).toInt()
+                }
+            } else {
+                (qtyToBreak * conversionFactor).toInt()
+            }
+
+            val destAdditionStr = if (destProduct!!.unitType == "Gram (g)") {
+                "${destAdditionAmt}g"
+            } else if (destProduct!!.unitType == "Kilogram (kg)") {
+                "${destAdditionAmt / 1000.0}kg (${destAdditionAmt}g)"
+            } else {
+                "$destAdditionAmt ${destProduct!!.unit}"
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (hasEnoughStock) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                    else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)
+                ),
+                border = BorderStroke(1.dp, if (hasEnoughStock) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f) else MaterialTheme.colorScheme.error.copy(alpha = 0.3f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Real-time Breakdown Ledger Formula",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (hasEnoughStock) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    )
+                    Text("• Source Product: [${sourceProduct!!.name}] will deduct $sourceDeductionStr", style = MaterialTheme.typography.bodyMedium)
+                    Text("• Destination Product: [${destProduct!!.name}] will receive +$destAdditionStr", style = MaterialTheme.typography.bodyMedium)
+                    
+                    if (!hasEnoughStock) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Default.Warning, contentDescription = "Error", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                            Text("Insufficient stock in source product!", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            onClick = {
+                if (sourceProduct == null || destProduct == null) {
+                    Toast.makeText(context, "Please select both source and destination products", Toast.LENGTH_SHORT).show()
+                    return@Button
+                }
+                if (qtyToBreak <= 0) {
+                    Toast.makeText(context, "Invalid quantity", Toast.LENGTH_SHORT).show()
+                    return@Button
+                }
+                if (!hasEnoughStock) {
+                    Toast.makeText(context, "Insufficient source stock", Toast.LENGTH_SHORT).show()
+                    return@Button
+                }
+
+                onBreakBulkProduct(sourceProduct!!.id, destProduct!!.id, qtyToBreak, conversionFactor)
+                Toast.makeText(context, "Decanted stock successfully!", Toast.LENGTH_LONG).show()
+                
+                qtyToBreakInput = "1"
+                customFactorInput = ""
+                sourceProduct = null
+                destProduct = null
+            },
+            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("decant_submit_btn"),
+            enabled = sourceProduct != null && destProduct != null && qtyToBreak > 0 && hasEnoughStock,
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Icon(Icons.Default.Refresh, contentDescription = "Convert")
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("EXECUTE STOCK DECANTING / BREAKAGE", fontWeight = FontWeight.Bold)
         }
     }
 }
